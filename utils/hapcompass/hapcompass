@@ -1,0 +1,4 @@
+#!/bin/sh
+RunDir=$(cd `dirname $(readlink -f $0)`; pwd)
+MachType=$(uname -m)
+java -jar $RunDir/hapcompass.jar "$@"

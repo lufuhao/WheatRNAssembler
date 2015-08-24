@@ -1,0 +1,10 @@
+#!/bin/sh
+RunDir=$(cd `dirname $(readlink -f $0)`; pwd)
+MachType=$(uname -m)
+if [ ! -s $RunDir/hc2vcf.jar ]; then
+  echo "Please download hc2vcf.jar to HapCompass installation path where you can find hapcompass.jar from http://www.brown.edu/Research/Istrail_Lab/hapcompass.php"
+  echo "OR"
+  echo "cd /path/to/hapcompass.jar"
+  echo "wget http://www.brown.edu/Research/Istrail_Lab/resources/hc2vcf.jar"
+fi
+java -jar $RunDir/hc2vcf.jar "$@"
