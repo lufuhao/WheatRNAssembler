@@ -6,10 +6,10 @@ use FindBin qw($Bin);
 use Getopt::Long;
 use Bio::DB::Sam;
 use Scalar::Util;
-use File::Path qw/remove_tree rmtree/;
+use File::Path qw/remove_tree/;
 use File::Copy qw/move/;
 use FuhaoPerl5Lib::BamKit qw/ReduceReadNameLength SamCleanHeader SortBam IndexBam CalcFPKM ReadSam/;
-use FuhaoPerl5Lib::VcfKit qw/ExtractVcf ReadVcf RunFreebayes ReadVariantType HapcompassVcf HcFragments RunHapCompass GroupFragments CorrectAlleles ReadHcOut/;
+use FuhaoPerl5Lib::VcfKit qw/ExtractVcf ReadVcf RunFreebayes ReadVariantType HapcompassVcf HapcompassFragments RunHapCompass GroupFragments/;
 use FuhaoPerl5Lib::CmdKit;
 use FuhaoPerl5Lib::FileKit;
 use FuhaoPerl5Lib::FastaKit qw/CdbFasta CdbYank IndexFasta RenameFasta RunFqTrinity/;
@@ -29,7 +29,6 @@ Requirements:
 	Programs: hapcompass.jar hc2vcf.jar, gzip, gunzip, cat, zcat, 
 			samtools, freebayes, vcf-tools, express, parallel
 	Modiles: Scalar::Util, Cwd, Getopt::Long, FindBin, Statistics::Basic
-	         File::Copy
 
 Descriptions:
 	Determine the insert size given pairs of seqing data by
@@ -91,7 +90,6 @@ Running LOG
 	--logcfpkm	<[Opt] Cluster FPKM LOG>
 
 MISC
-	--clean	<clean cluster log>
 	--phred	<phred64|phred33>
 	--threads	<[Opt] Int, default:1>
 	--cpus	<[Opt] Int, default:1>
@@ -121,7 +119,7 @@ die USAGE unless @ARGV;
 
 
 ###Receving parameter################################################
-my ($help, $verbose, $numthreads, $debug, $ver, $cleanlog);
+my ($help, $verbose, $numthreads, $debug, $ver);
 #Global
 my ($reference, $file_cluster, $list);
 my ($file_bam_aabbdd);#, $file_bam_aabb, $file_bam_aa, $file_bam_dd);###filelist
@@ -196,7 +194,6 @@ GetOptions(
 	"logcfpkm:s" => \$clusterfpkm,
 	"logallele:s" => \$allele_log,
 	"loggeno:s" => \$geno_log,
-	"clean!" => \$cleanlog,
 	"phred:s" => \$fq_qual_score,
 	"maxinsert:i" => \$maxinsert,
 	"threads|t:i" => \$numthreads,
@@ -234,7 +231,7 @@ $path_freebayes='freebayes' unless (defined $path_freebayes);
 $freebayes_min_coverage=3 unless (defined $freebayes_min_coverage);
 $freebayes_min_alternative_count=3 unless (defined $freebayes_min_alternative_count);
 $vcfqual=20 unless (defined $vcfqual);
-$min_mapq=0 unless (defined $min_mapq);
+$min_mapq=1 unless (defined $min_mapq);
 $freebayes_parallel=0 unless (defined $freebayes_parallel);
 $path_freebayesparallel='freebayes-parallel' unless (defined $path_freebayesparallel);
 $freebayes_fastabin=200 unless (defined $freebayes_fastabin);
@@ -265,7 +262,7 @@ $fpkm_log='0.reference.fpkm.log' unless (defined $fpkm_log);
 $allele_log='0.allele.log' unless (defined $allele_log);
 $geno_log='0.geno.log' unless (defined $geno_log);
 $clusterfpkm='0.cluster.FPKM.log' unless (defined $clusterfpkm);
-$cleanlog=0 unless (defined $cleanlog);
+
 
 
 ### input and output ################################################
@@ -455,10 +452,6 @@ unlink glob "$RunDir/AABBDD/*";
 if (! -d "$RunDir/fasta") {
 	mkdir ("$RunDir/fasta", 0766) || die "(Main0)Error: can not create folder $RunDir/fasta\n";
 }
-if (! -d "$RunDir/kmergenie") {
-	mkdir ("$RunDir/kmergenie", 0766) || die "(Main0)Error: can not create folder $RunDir/kmergenie\n";
-}
-
 #if (! -d "$RunDir/AABB") {
 #	mkdir ("$RunDir/AABB", 0766) || die "(Main0)Error: can not create folder AABB\n";
 #}
@@ -495,9 +488,11 @@ while (my $cluster_line=<CLUSTER>) {
 	chomp $cluster_line;
 	$cluster_num++;
 
+
+
 ### Step0: control which lines to reads: --list
 	my $stage=0;
-#	print "(Main$stage)Step: Line control\n"; ### For test ###
+	print "(Main$stage)Step: Line control\n"; ### For test ###
 	if ($cluster_num<$cluster_start) {
 		next;
 	}
@@ -507,7 +502,7 @@ while (my $cluster_line=<CLUSTER>) {
 		}
 	}
 	next if ($cluster_line=~/^#/);
-	print GENOLOG "\n\n\nCluster$cluster_num: $cluster_line\n";
+	print GENOLOG "Cluster$cluster_num: $cluster_line\n";
 	print "\n\n\n\n\n##### Prcessing Cluster $cluster_num ###\n$cluster_line\n";
 	print STDERR "\n\n\n\n\n##### Prcessing Cluster $cluster_num ###\n$cluster_line\n";
 	@cluster_seqids=(); ###Empty this in case of abnormal duplicates
@@ -520,24 +515,10 @@ while (my $cluster_line=<CLUSTER>) {
 	}
 	my $fastaids=join(',', @cluster_seqids);
 ##COMMENT: Empty folder
-	unless (chdir $RunDir) {
-		print STDERR "(Main$stage)Error: can not chdir to : $RunDir\n";
-		print CLUSTERLOG $cluster_num."\tFail\t1\t$stage\tChDirAtBegining\n";
-		next;
-	}
 	unlink glob "$RunDir/AABBDD/*";
 	unlink glob "$RunDir/AABB/*";
 	unlink glob "$RunDir/AA/*";
 	unlink glob "$RunDir/DD/*";
-	if ($cleanlog) {
-		my @cluster=glob "$RunDir/Clust*";
-		foreach my $indfolder (@cluster) {
-			print "(Main$stage)Testing: delete PATH: $indfolder\n";
-#			sleep(1);
-			unlink glob "$indfolder/*";
-		}
-	}
-
 
 
 ## Stage1: extract fasta reference
@@ -596,7 +577,6 @@ while (my $cluster_line=<CLUSTER>) {
 		print CLUSTERLOG $cluster_num."\tFail\t1\t$stage\tNoVcfAABBDD\n";
 		next;
 	}
-	
 	
 
 
@@ -670,6 +650,8 @@ while (my $cluster_line=<CLUSTER>) {
 #								'mapped' => ++/0,
 #								'ref' => chr => ++));
 	my $readsum={};
+#Format: %{$readids_by_alleles}=(chr => (pos => (allele1 => @readIDs, allele2 => @readids)))
+	my $readids_by_alleles={};
 #my $test_aa_expressed=0; my $test_bb_expressed=0; my $test_dd_expressed=0;
 
 
@@ -685,33 +667,28 @@ while (my $cluster_line=<CLUSTER>) {
 		next;
 	}
 ##GroupReads
-	(my $test_groupreads, $fragments, $readsum)=&GroupReads($aabbdd_bam_obj, $aabbdd_vcf_obj);
+	(my $test_groupreads, $fragments, $readsum, $readids_by_alleles)=&GroupReads($aabbdd_bam_obj, $aabbdd_vcf_obj);
 	if ($test_groupreads) {
 		print STDERR "(Main$stage)Error: GroupReads SUB failed\n";
 		print CLUSTERLOG $cluster_num."\tFail\t1\t$stage\tGroupReads\n";
 		next;
 	}
-	if (0) {
-		print "(Main$stage)Test: \$readsum\n";
-		print Dumper $readsum;
-		print "\n";
+	if (0) { ### For test ###
+		print "\n\n\n### (Main$stage) Genome assignment ###\n";
+		print Dumper $assignallele;
+		print "\n\n\n";
 	}
+	
+
+
+###Stage6: checkpoint
+	$stage=6;
 	if (0) { ### test $fragments ###
 		print "(Main$stage)Test: \$fragments\n";
 		print Dumper $fragments;### For test ###
 		print "\n";
 	}
-	$aabbdd_bam_obj={};
-
-
-
-###Stage6: checkpoint
-	$stage=6;
-	my $fragmentfile="$RunDir/Clust$cluster_num/AABBDD.$cluster_num.fragments";
-##Format: %{$corrected_fragments}=($readid => chrom => $partstart => $pos => $allele => $qual);
-##Format: %{$corrected_sites}=($chr => $pos => $allele => ++)
-##Format: %{}
-	my ($test_hc, $corrected_fragments, $corrected_sites, $vcfreferencer)=HcFragments($fragments, $fragmentfile, $readsum);
+	my ($test_hc, $corrected_fragments, $corrected_sites)=HapcompassFragments($fragments, "$RunDir/Clust$cluster_num/AABBDD.$cluster_num.fragments", $readsum, $polymorphicsites);
 	unless ($test_hc) {
 		print STDERR "(Main$stage)Error: prepare HapCompass Fragments error\n";
 		print CLUSTERLOG $cluster_num."\tFail\t1\t$stage\tFragments\n";
@@ -722,11 +699,53 @@ while (my $cluster_line=<CLUSTER>) {
 	foreach (keys %{$corrected_sites}) {
 		$corrected_num_allelic_sites+=scalar(keys %{${$corrected_sites}{$_}});
 	}
-#	print "(Main$stage)Test: $corrected_num_allelic_sites\n"; ### for test ###
+	print $corrected_num_allelic_sites."\n";
 	print "(Main$stage)Info: Fragments cleaning: ".scalar(keys %{$fragments})." => ".scalar(keys %{$corrected_fragments})."\n";
 	
-#	unless (GroupFragments($corrected_fragments)) {print STDERR "(Main$stage)Error: GroupFragments running";next;} ### For test ###
-#	print "(Main$stage)Test: \%{\$corrected_sites}\n"; print Dumper $corrected_sites; print "\n";
+#	unless (GroupFragments($corrected_fragments)) {
+#		print STDERR "(Main$stage)Error: GroupFragments running";
+#		next;
+#	}
+	
+	if (0) {
+		print Dumper $assignallele;
+	}
+	if (0) {
+		foreach my $chrom (keys %{$aabbdd_vcf_obj}) {
+			print "(Main$stage)Test: AlleleTesting: chromosome $chrom\n" if ($debug);
+			foreach my $posit (sort {$a <=> $b } keys %{${$aabbdd_vcf_obj}{$chrom}}) {
+				print "(Main$stage)Test: AlleleTesting: positions $posit\n" if ($debug);
+				my $printline=$cluster_num."\t".$chrom."\t".$posit."\t".${${${$aabbdd_vcf_obj}{$chrom}}{$posit}}[2]."\t";
+				#%ancestralalleles
+				$printline.="Diploid: \t";
+				if (exists $ancestralalleles{$chrom} and exists ${$ancestralalleles{$chrom}}{$posit}) {
+					$printline.=(exists $ancestralalleles{$chrom}{$posit}{'A'}) ? $ancestralalleles{$chrom}{$posit}{'A'} : 'N';
+					$printline.="\t";
+					$printline.=(exists $ancestralalleles{$chrom}{$posit}{'B'}) ? $ancestralalleles{$chrom}{$posit}{'B'} : 'N';
+					$printline.="\t";
+					$printline.=(exists $ancestralalleles{$chrom}{$posit}{'D'}) ? $ancestralalleles{$chrom}{$posit}{'D'} : 'N';
+					$printline.="\t";
+				}
+				else {
+					$printline.='N'."\t".'N'."\t".'N'."\t";
+				}
+				#%{$assignallele}
+				$printline.="Genome: \t";
+				if (exists ${$assignallele}{$chrom} and exists ${${$assignallele}{$chrom}}{$posit}) {
+					$printline.=(exists ${$assignallele}{$chrom}{$posit}{'A'}) ? ${$assignallele}{$chrom}{$posit}{'A'} : 'N';
+					$printline.="\t";
+					$printline.=(exists ${$assignallele}{$chrom}{$posit}{'B'}) ? ${$assignallele}{$chrom}{$posit}{'B'} : 'N';
+					$printline.="\t";
+					$printline.=(exists ${$assignallele}{$chrom}{$posit}{'D'}) ? ${$assignallele}{$chrom}{$posit}{'D'} : 'N';
+					$printline.="\t";
+				}
+				else {
+					$printline.='N'."\t".'N'."\t".'N'."\t";
+				}
+				print ALLELELOG $printline, "\n";
+			}
+		}
+	}
 
 
 
@@ -785,11 +804,7 @@ while (my $cluster_line=<CLUSTER>) {
 			$totalmappedreads++;
 		}
 	}
-	unless ($totalmappedreads>0 and ($num_shared_reads+scalar(keys %{$corrected_fragments}))>10) {### minimum 10 reads
-		print STDERR "(Main$stage)Error: Not enough reads\n";
-		print CLUSTERLOG $cluster_num."\tFail\t1\t$stage\tNotEnoughReads\n";
-		next;
-	}
+	
 	if (($total_tagged/$totalmappedreads) >=0.4) {###Decide ploidy if 40% reads assigned
 		$genomeinfer_from_reads=1;
 		foreach (keys %genomecount) {
@@ -825,7 +840,7 @@ while (my $cluster_line=<CLUSTER>) {
 			if (exists $expressfpkm{$_}) {
 				$test_aa_expressed=1 if (defined $expressfpkm{$_}[2] and $expressfpkm{$_}[2]>$minimum_fpkm);
 				$test_dd_expressed=1 if (defined $expressfpkm{$_}[3] and $expressfpkm{$_}[3]>$minimum_fpkm);
-				$test_bb_expressed=1 if (exists $genomecount{'B'} and ($genomecount{'B'}/$total_tagged) >=0.05);
+				$test_bb_expressed=1 if (($genomecount{$_}/$total_tagged) >=0.05);
 			}
 		}
 		if ($corrected_num_allelic_sites==0) {
@@ -835,9 +850,8 @@ while (my $cluster_line=<CLUSTER>) {
 			foreach (keys %genomecount) {
 				if ($genomecount{$_}> $maxcount) {
 					$guessgenome=$_;
-					$maxcount=$genomecount{$_};
 				}
-				elsif ($genomecount{$_}== $maxcount) {
+				else {
 					$guessgenome.=$_;
 				}
 			}
@@ -875,69 +889,51 @@ while (my $cluster_line=<CLUSTER>) {
 		print GENOLOG "\n";
 		map {print GENOLOG "Chrom: $_\tCount: $chromcount{$_}\n"} (sort (keys %chromcount));
 		print GENOLOG "##### Genome summary #####\n";
-		print GENOLOG "(Main$stage)Info: Ploidy: $ploidy\nAA: $test_aa_expressed\nBB: $test_bb_expressed\nDD: $test_dd_expressed\nPloid string: $inferred_genoploidy\nInferredFromGenome: $genomeinfer_from_reads\n";
+		print GENOLOG "(Main$stage)Info: Ploidy: $ploidy\nAA: $test_aa_expressed\nBB: $test_bb_expressed\nDD: $test_dd_expressed\nPloid string: $inferred_genoploidy\n";
 	}
-	if (1) {### For test ###
+	if (0) {### For test ###
 		print "##### Genome summary #####\nTotal mapped reads: $totalmappedreads\nTagged: $total_tagged\nNotag: $total_notag\nShared reads: $num_shared_reads\nExcluded reads: $num_excluded_reads\n\n";
 		
 		map {print "Genome: $_\tCount: $genomecount{$_}\n"} (sort (keys %genomecount)); 
 		print "\n";
 		map {print "Chrom: $_\tCount: $chromcount{$_}\n"} (sort (keys %chromcount));
 		print "##### Genome summary #####\n";
-		print "(Main$stage)Info: Ploidy: $ploidy\nAA: $test_aa_expressed\nBB: $test_bb_expressed\nDD: $test_dd_expressed\nPloid string: $inferred_genoploidy\nInferredFromGenome: $genomeinfer_from_reads\n";
+		print "(Main$stage)Info: Ploidy: $ploidy\nAA: $test_aa_expressed\nBB: $test_bb_expressed\nDD: $test_dd_expressed\nPloid string: $inferred_genoploidy\n";
 	}
-#	if ($ploidy!=1 or $corrected_num_allelic_sites!=0 or scalar(keys %{$corrected_fragments}) != 0) {
-#		print STDERR "(Main$stage)Error: Multiploidy\n";
-#		print CLUSTERLOG $cluster_num."\tFail\t1\t$stage\tMultiploidy:\n";
-#		next;
-#	}
-	
-	
-	
-###Stage8: correct genome alleles using diploid and genome assignemnts
-	$stage=8;
-	print "\n(Main$stage)Step: Correct Allele\n"; ### For test ###
-	my $comprimised=0;
-##Format: %CAgenodepth=(chr => pos => allele => depth)
-	my $alleledepth={};
-	if ($ploidy==1) {
-		if ($corrected_num_allelic_sites>0) {
-			print "(Main$stage)Info: Comprimised cluster: ploidy=1 but have $corrected_num_allelic_sites allelic sites\n";
-			foreach (keys %{$corrected_fragments}) {
-				${$readsum}{$_}{'shared'}=1;
-			}
-			$comprimised=1;
-			$corrected_fragments={};
-			$corrected_num_allelic_sites=0;
-		}
-		$test_run_phase=0;
-	}
-	else {
-		(my $test_CAcode, $assignallele, $alleledepth)=CorrectAlleles($inferred_genoploidy, $corrected_fragments, $readsum, \%ancestralalleles);
-		unless ($test_CAcode) {
-			print STDERR "(Main$stage)Error: Correct Allele\n";
-			print CLUSTERLOG $cluster_num."\tFail\t1\t$stage\tCorrectAllele\n";
-			next;
-		}
-	}
-#	print "(Main$stage)Test: assignallele\n"; print Dumper $assignallele; print "\n"; ### Test asignallele ###
-#	print "(Main$stage)Test: Depth\n"; print Dumper $alleledepth; print "\n"; ### Test depth ###
 
+	if ($ploidy!=1 or $corrected_num_allelic_sites!=0 or scalar(keys %{$corrected_fragments})) {
+		print STDERR "(Main$stage)Error: Multiploidy\n";
+		print CLUSTERLOG $cluster_num."\tFail\t1\t$stage\tMultiploidy:\n";
+		next;
+	}
 
 
 ###Stage9: Fill in genotypes accroding to the corrected alleles
 	$stage=9;
 	print "\n(Main$stage)Step: Fillin\n"; ### For test ###
-	
 	my $fixedAllele_3fillin={};
 ##Format: $fixedGeno_4fillin{chr}->{pos}='0/1/0'; ('A/B/D')
 	my $fixedGeno_4fillin={};
 	
-	if ($ploidy>1) {
+#temp
+	if ($ploidy==1) {
+		print "(Main$stage)Info: ploidy==1; Skip SNP phasing\n"; ### For test ###
+#		if ($test_run_phase==0) {
+#			$final_geno=$assignallele;
+#		}
+	}
+	else {
 		print "(Main$stage)Info: run_phasing before fillin: $test_run_phase\n";
-#		print "(Main$stage)Test: Genome assignment ###\n"; print Dumper $assignallele; ### for test ###
-		(my $test_fiv, $test_run_phase, my $fixedgeno_hashindex, my $fillinAlleles_hashindex)=&FillInVariations($assignallele,$aabbdd_vcf_obj, $inferred_genoploidy, $corrected_sites, $alleledepth); ###checl Fillin $polymorphic
-#		print "(Main$stage)Test: Genome assignment ###\n"; print Dumper $assignallele; ### for test ###
+		if (0) { ### For test ###
+			print "### Genome assignment ###\n";
+			print Dumper $assignallele;
+		}
+		(my $test_fiv, $test_run_phase, my $fixedgeno_hashindex, my $fillinAlleles_hashindex)=&FillInVariations($assignallele,$aabbdd_vcf_obj, $inferred_genoploidy, $corrected_sites); ###checl Fillin $polymorphic
+		if (0) { ### For test %{$assignallele}###
+			print "### Genome assignment ###\n";
+			print Dumper $assignallele;
+		}
+
 		if ($test_fiv==0) {###Fillin succeeds
 			$fixedAllele_3fillin=$fillinAlleles_hashindex;
 			$fixedGeno_4fillin=$fixedgeno_hashindex;
@@ -962,8 +958,14 @@ while (my $cluster_line=<CLUSTER>) {
 			print CLUSTERLOG $cluster_num."\tFail\t1\t$stage\tFillin4\n";
 			next;
 		}
-#		print "(Main$stage)Test: ### Genome assigned ###\n"; print Dumper $assignallele; print "\n"; ### For test %{$assignallele}###
-#		print "(Main$stage)Test: ### Genoypes Fillin ###\n"; print Dumper $fixedAllele_3fillin; print "\n"; ### For test fixedAllele_3fillin###
+		if (0) { ### For test %{$assignallele}###
+			print "### Genome Fillin ###\n";
+			print Dumper $assignallele;
+		}
+		if (0) { ### For test fixedAllele_3fillin###
+			print "### Genome Fillin ###\n";
+			print Dumper $fixedAllele_3fillin;
+		}
 		$final_geno=$fixedAllele_3fillin;
 		print "(Main$stage)Info: run_phasing after fillin: $test_run_phase\n"; ### For test ###
 	}
@@ -978,160 +980,18 @@ while (my $cluster_line=<CLUSTER>) {
 	}
 	if (0) {
 		foreach my $chrom (keys %{$aabbdd_vcf_obj}) {
-			print "(Main$stage)Test: AlleleTesting: chromosome $chrom\n" if ($debug); ### For test ###
+			print "(Main$stage)Test: AlleleTesting: chromosome $chrom\n" if ($debug);
 			foreach my $posit (sort {$a <=> $b } keys %{${$aabbdd_vcf_obj}{$chrom}}) {
-				print "(Main$stage)Test: AlleleTesting: positions $posit\n" if ($debug);### For test ###
-				next unless (exists ${$corrected_sites}{$chrom} and exists ${$corrected_sites}{$chrom}{$posit});
+				print "(Main$stage)Test: AlleleTesting: positions $posit\n" if ($debug);
 				my $printline=$cluster_num."\t".$chrom."\t".$posit."\t".${${${$aabbdd_vcf_obj}{$chrom}}{$posit}}[2]."\t";
 				#%ancestralalleles
 				$printline.="Diploid: \t";
-				if (exists $ancestralalleles{$chrom} and exists $ancestralalleles{$chrom}{$posit}) {
+				if (exists $ancestralalleles{$chrom} and exists ${$ancestralalleles{$chrom}}{$posit}) {
 					$printline.=(exists $ancestralalleles{$chrom}{$posit}{'A'}) ? $ancestralalleles{$chrom}{$posit}{'A'} : 'N';
 					$printline.="\t";
 					$printline.=(exists $ancestralalleles{$chrom}{$posit}{'B'}) ? $ancestralalleles{$chrom}{$posit}{'B'} : 'N';
 					$printline.="\t";
 					$printline.=(exists $ancestralalleles{$chrom}{$posit}{'D'}) ? $ancestralalleles{$chrom}{$posit}{'D'} : 'N';
-					$printline.="\t";
-				}
-				else {
-					$printline.='N'."\t".'N'."\t".'N'."\t";
-				}
-				#%{$assignallele}
-				$printline.="Genome: \t";
-				if (exists ${$assignallele}{$chrom} and exists ${$assignallele}{$chrom}{$posit}) {
-					$printline.=(exists ${$assignallele}{$chrom}{$posit}{'A'}) ? ${$assignallele}{$chrom}{$posit}{'A'} : 'N';
-					$printline.="\t";
-					$printline.=(exists ${$assignallele}{$chrom}{$posit}{'B'}) ? ${$assignallele}{$chrom}{$posit}{'B'} : 'N';
-					$printline.="\t";
-					$printline.=(exists ${$assignallele}{$chrom}{$posit}{'D'}) ? ${$assignallele}{$chrom}{$posit}{'D'} : 'N';
-					$printline.="\t";
-				}
-				else {
-					$printline.='N'."\t".'N'."\t".'N'."\t";
-				}
-				#%{$fixedAllele_3fillin}
-				$printline.="Fillin: \t";
-				if (exists ${$fixedAllele_3fillin}{$chrom} and exists ${$fixedAllele_3fillin}{$chrom}{$posit}) {
-					$printline.=(exists ${$fixedAllele_3fillin}{$chrom}{$posit}{'A'}) ? ${$fixedAllele_3fillin}{$chrom}{$posit}{'A'} : 'N';
-					$printline.="\t";
-					$printline.=(exists ${$fixedAllele_3fillin}{$chrom}{$posit}{'B'}) ? ${$fixedAllele_3fillin}{$chrom}{$posit}{'B'} : 'N';
-					$printline.="\t";
-					$printline.=(exists ${$fixedAllele_3fillin}{$chrom}{$posit}{'D'}) ? ${$fixedAllele_3fillin}{$chrom}{$posit}{'D'} : 'N';
-					$printline.="\t";
-				}
-				else {
-					$printline.='N'."\t".'N'."\t".'N'."\t";
-				}
-				#%{$final_geno}
-				$printline.="Final: \t";
-				if (exists ${$final_geno}{$chrom} and exists ${$final_geno}{$chrom}{$posit}) {
-					$printline.=(exists ${$final_geno}{$chrom}{$posit}{'A'}) ? ${$final_geno}{$chrom}{$posit}{'A'} : 'N';
-					$printline.="\t";
-					$printline.=(exists ${$final_geno}{$chrom}{$posit}{'B'}) ? ${$final_geno}{$chrom}{$posit}{'B'} : 'N';
-					$printline.="\t";
-					$printline.=(exists ${$final_geno}{$chrom}{$posit}{'D'}) ? ${$final_geno}{$chrom}{$posit}{'D'} : 'N';
-					$printline.="\t";
-				}
-				else {
-					$printline.='N'."\t".'N'."\t".'N'."\t";
-				}
-				#%{$fixedGeno_4fillin}
-				$printline.="Geno: \t";
-				if (exists ${$fixedGeno_4fillin}{$chrom}) {
-					my $fillin_geno=(exists ${$fixedGeno_4fillin}{$chrom}{$posit}) ? ${$fixedGeno_4fillin}{$chrom}{$posit} : 'N';
-					$printline.=$fillin_geno."\t";
-				}
-				else {
-					$printline.='N'."\t";
-				}
-				#$test_run_phase
-				$printline.=$test_run_phase."\n";
-				print ALLELELOG $printline;
-			}
-		}
-	}
-
-
-##COMMENT: Main($stage) SNP phasing
-	$stage=10;
-	print "\n(Main$stage)Step: phasing\n"; ### For test ###
-	if ($test_run_phase) {
-		my $hapcompassvcf="$RunDir/Clust$cluster_num/AABBDD.$cluster_num.hapcompass.vcf";
-		my $phasedsolution="$RunDir/Clust$cluster_num/AABBDD.$cluster_num.phased";
-		unless (HapcompassVcf($cluster_orivcf, $hapcompassvcf, $fixedGeno_4fillin, $corrected_sites, $vcfreferencer)) {
-			print STDERR "(Main$stage)Error: prepare HapCompass VCF error\n";
-			print CLUSTERLOG $cluster_num."\tFail\t1\t$stage\tHapcompassVcf\n";
-			next;
-		}
-		unless (RunHapCompass(0, $fragmentfile, $hapcompassvcf, $ploidy, "$fragmentfile.hapcompass", $phasedsolution, ' ', $path_java, $path_hapcompassjar)) {
-			print STDERR "(Main$stage)Error: HapCompass running error\n";
-			print CLUSTERLOG $cluster_num."\tFail\t1\t$stage\tHapCompass\n";
-			next;
-		}
-		my $phased_geno=dclone($fixedAllele_3fillin);
-#		print "(Main$stage)Error: phased before ReadHcOut\n"; print Dumper $phased_geno; print "\n"; ### For test ###
-		my $excluded_chroms={};
-		unless (ReadHcOut($phasedsolution, $inferred_genoploidy, $phased_geno, $excluded_chroms)) {
-			print STDERR "(Main$stage)Error: HapCompass read hapcompass error\n";
-			print CLUSTERLOG $cluster_num."\tFail\t1\t$stage\tHapCompassOut\n";
-			next;
-		}
-#		print "(Main$stage)Error: phased after ReadHcOut\n"; print Dumper $phased_geno; print "\n"; ### For test ###
-		$final_geno=$phased_geno;
-		if (scalar(keys %{$excluded_chroms}) > 0) {
-			my @temp_excluded=keys %{$excluded_chroms};
-			print CLUSTERLOG $cluster_num."\t?\t1\t$stage\tExcluded: @temp_excluded\n";
-			foreach (@temp_excluded) {
-				delete ${$corrected_sites}{$_} if (exists ${$corrected_sites}{$_});
-				foreach (keys %{$corrected_sites}) {
-					$corrected_num_allelic_sites+=scalar(keys %{${$corrected_sites}{$_}});
-				}
-#				print "(Main$stage)Test: $corrected_num_allelic_sites\n";
-			}
-			foreach my $readid (keys %{$readsum}) {
-				my $test_excluded=1;
-				foreach my $excludchr (@temp_excluded) {
-					unless (exists ${$readsum}{$readid}{'ref'} and exists ${$readsum}{$readid}{'ref'}{$excludchr}) {
-						$test_excluded=0;
-					}
-				}
-				if ($test_excluded==1) {
-					${$readsum}{$readid}{'excluded'}++;
-					delete ${$corrected_fragments}{$readid} if (exists ${$corrected_fragments}{$readid});
-				}
-				if (exists ${$corrected_fragments}{$readid}) {
-					foreach (@temp_excluded) {
-						if (exists ${$corrected_fragments}{$readid}{$_}) {
-							delete ${$corrected_fragments}{$readid}{$_};
-							unless (scalar(keys %{${$corrected_fragments}{$readid}})>0) {
-								delete ${$corrected_fragments}{$readid};
-							}
-						}
-					}
-				}
-			}
-			
-		}
-	}
-	else {
-		print "(Main$stage)Info: no need to run HapCompass\n";
-		print GENOLOG "(Main$stage)Info: no need to run HapCompass\n";
-	}
-	if (1) {
-		foreach my $chrom (keys %{$aabbdd_vcf_obj}) {
-			print "(Main$stage)Test: AlleleTesting: chromosome $chrom\n" if ($debug); ### For test ###
-			foreach my $posit (sort {$a <=> $b } keys %{${$aabbdd_vcf_obj}{$chrom}}) {
-				print "(Main$stage)Test: AlleleTesting: positions $posit\n" if ($debug);### For test ###
-#				next unless (exists ${$corrected_sites}{$chrom} and exists ${$corrected_sites}{$chrom}{$posit});
-				my $printline=$cluster_num."\t".$chrom."\t".$posit."\t".${${${$aabbdd_vcf_obj}{$chrom}}{$posit}}[2]."\t";
-				#%ancestralalleles
-				$printline.="Diploid: \t";
-				if (exists $ancestralalleles{$chrom} and exists ${$ancestralalleles{$chrom}}{$posit}) {
-					$printline.=(exists $ancestralalleles{$chrom}{$posit}{'A'} and $ancestralalleles{$chrom}{$posit}{'A'}=~/^\d+$/) ? $ancestralalleles{$chrom}{$posit}{'A'} : 'N';
-					$printline.="\t";
-					$printline.=(exists $ancestralalleles{$chrom}{$posit}{'B'} and $ancestralalleles{$chrom}{$posit}{'B'}=~/^\d+$/) ? $ancestralalleles{$chrom}{$posit}{'B'} : 'N';
-					$printline.="\t";
-					$printline.=(exists $ancestralalleles{$chrom}{$posit}{'D'} and $ancestralalleles{$chrom}{$posit}{'D'}=~/^\d+$/) ? $ancestralalleles{$chrom}{$posit}{'D'} : 'N';
 					$printline.="\t";
 				}
 				else {
@@ -1172,18 +1032,86 @@ while (my $cluster_line=<CLUSTER>) {
 				else {
 					$printline.='N'."\t";
 				}
-				#%{$final_geno}
-				$printline.="Final: \t";
-				if (exists ${$final_geno}{$chrom} and exists ${$final_geno}{$chrom}{$posit}) {
-					$printline.=(exists ${$final_geno}{$chrom}{$posit}{'A'}) ? ${$final_geno}{$chrom}{$posit}{'A'} : 'N';
+				#$test_run_phase
+				$printline.=$test_run_phase."\n";
+				print ALLELELOG $printline;
+			}
+		}
+	}
+
+
+
+##COMMENT: Main($stage) SNP phasing
+	print "\n(Main$stage)Step: phasing\n"; ### For test ###
+	if ($test_run_phase) {
+		unless (HapcompassVcf($cluster_orivcf, "$RunDir/Clust$cluster_num/AABBDD.$cluster_num.hapcompass.vcf", $fixedGeno_4fillin, $corrected_sites)) {
+			print STDERR "(Main$stage)Error: prepare HapCompass VCF error\n";
+			print CLUSTERLOG $cluster_num."\tFail\t1\t$stage\tHapcompassVcf\n";
+			next;
+		}
+		unless (RunHapCompass(0, "$RunDir/Clust$cluster_num/AABBDD.$cluster_num.fragments", "$RunDir/Clust$cluster_num/AABBDD.$cluster_num.hapcompass.vcf", $ploidy, "$RunDir/Clust$cluster_num/AABBDD.$cluster_num.fragments.hapcompass", "$RunDir/Clust$cluster_num/AABBDD.$cluster_num.phased.vcf", ' ', $path_java, $path_hapcompassjar, $path_hc2vcf)) {
+			print STDERR "(Main$stage)Error: HapCompass running error\n";
+			print CLUSTERLOG $cluster_num."\tFail\t1\t$stage\tHapCompass\n";
+			next;
+		}
+	}
+	else {
+		print "(Main$stage)Info: no need to run HapCompass\n";
+		print GENOLOG "(Main$stage)Info: no need to run HapCompass\n";
+	}
+	if (1) {
+		foreach my $chrom (keys %{$aabbdd_vcf_obj}) {
+			print "(Main$stage)Test: AlleleTesting: chromosome $chrom\n" if ($debug);
+			foreach my $posit (sort {$a <=> $b } keys %{${$aabbdd_vcf_obj}{$chrom}}) {
+				print "(Main$stage)Test: AlleleTesting: positions $posit\n" if ($debug);
+				my $printline=$cluster_num."\t".$chrom."\t".$posit."\t".${${${$aabbdd_vcf_obj}{$chrom}}{$posit}}[2]."\t";
+				#%ancestralalleles
+				$printline.="Diploid: \t";
+				if (exists $ancestralalleles{$chrom} and exists ${$ancestralalleles{$chrom}}{$posit}) {
+					$printline.=(exists $ancestralalleles{$chrom}{$posit}{'A'}) ? $ancestralalleles{$chrom}{$posit}{'A'} : 'N';
 					$printline.="\t";
-					$printline.=(exists ${$final_geno}{$chrom}{$posit}{'B'}) ? ${$final_geno}{$chrom}{$posit}{'B'} : 'N';
+					$printline.=(exists $ancestralalleles{$chrom}{$posit}{'B'}) ? $ancestralalleles{$chrom}{$posit}{'B'} : 'N';
 					$printline.="\t";
-					$printline.=(exists ${$final_geno}{$chrom}{$posit}{'D'}) ? ${$final_geno}{$chrom}{$posit}{'D'} : 'N';
+					$printline.=(exists $ancestralalleles{$chrom}{$posit}{'D'}) ? $ancestralalleles{$chrom}{$posit}{'D'} : 'N';
 					$printline.="\t";
 				}
 				else {
 					$printline.='N'."\t".'N'."\t".'N'."\t";
+				}
+				#%{$assignallele}
+				$printline.="Genome: \t";
+				if (exists ${$assignallele}{$chrom} and exists ${${$assignallele}{$chrom}}{$posit}) {
+					$printline.=(exists ${$assignallele}{$chrom}{$posit}{'A'}) ? ${$assignallele}{$chrom}{$posit}{'A'} : 'N';
+					$printline.="\t";
+					$printline.=(exists ${$assignallele}{$chrom}{$posit}{'B'}) ? ${$assignallele}{$chrom}{$posit}{'B'} : 'N';
+					$printline.="\t";
+					$printline.=(exists ${$assignallele}{$chrom}{$posit}{'D'}) ? ${$assignallele}{$chrom}{$posit}{'D'} : 'N';
+					$printline.="\t";
+				}
+				else {
+					$printline.='N'."\t".'N'."\t".'N'."\t";
+				}
+				#%{$fixedAllele_3fillin}
+				$printline.="Fillin: \t";
+				if (exists ${$fixedAllele_3fillin}{$chrom} and exists ${${$fixedAllele_3fillin}{$chrom}}{$posit}) {
+					$printline.=(exists ${$fixedAllele_3fillin}{$chrom}{$posit}{'A'}) ? ${$fixedAllele_3fillin}{$chrom}{$posit}{'A'} : 'N';
+					$printline.="\t";
+					$printline.=(exists ${$fixedAllele_3fillin}{$chrom}{$posit}{'B'}) ? ${$fixedAllele_3fillin}{$chrom}{$posit}{'B'} : 'N';
+					$printline.="\t";
+					$printline.=(exists ${$fixedAllele_3fillin}{$chrom}{$posit}{'D'}) ? ${$fixedAllele_3fillin}{$chrom}{$posit}{'D'} : 'N';
+					$printline.="\t";
+				}
+				else {
+					$printline.='N'."\t".'N'."\t".'N'."\t";
+				}
+				#%{$fixedGeno_4fillin}
+				$printline.="Geno: \t";
+				if (exists ${$fixedGeno_4fillin}{$chrom}) {
+					my $fillin_geno=(exists ${$fixedGeno_4fillin}{$chrom}{$posit}) ? ${$fixedGeno_4fillin}{$chrom}{$posit} : 'N';
+					$printline.=$fillin_geno."\t";
+				}
+				else {
+					$printline.='N'."\t";
 				}
 				#$test_run_phase
 				$printline.=$test_run_phase."\n";
@@ -1211,20 +1139,59 @@ while (my $cluster_line=<CLUSTER>) {
 
 ###Stage11: Get phlymorphic readids
 	$stage=11;
+#	%polymorphismreadids=(readid => ('gen' => ( 'A' => ++, 'B' => ++, 'D' => ++), 
+	my %polymorphismreadids=();
 	print "\n(Main$stage)Step: Get allelic reads\n"; ### For test ###
-##Format: %{$final_geno}=(chr => (pos => (A => allele/?, B=> allele/?, D => allele/?)))
-##Format: %{$corrected_fragments}=($readid => chrom => $partstart => $pos => $allele => $qual);
-#	%polymorphismreadids=(readid => ('gen' => ( 'A' => ++, 'B' => ++, 'D' => ++),
-	if ($corrected_num_allelic_sites>0) {
-#		print "(Main$stage)Test: \$corrected_fragments\n"; print Dumper $corrected_fragments; print "\n"; ### For test ###
-#		print "(Main$stage)Test: \$final_geno\n"; print Dumper $final_geno; print "\n"; ### For test ###
-		(my $test_GPRcode, $polymorphismreadids)=&GetPolymorphicReads($corrected_fragments, $final_geno);
+	if ($corrected_num_allelic_sites>0 ) {
+		foreach my $chrom (keys %{$final_geno}) {
+#Format: %{$assignallele}=(chr => (pos => (A => allele/?, B=> allele/?, D => allele/?)))		
+#		my @arr=keys %{${$final_geno}{$chrom}}; print "(Main$stage)Test: Chrom Pos: @arr\n";### For test ###
+			foreach my $pos (keys %{${$final_geno}{$chrom}}) {
+				unless (defined ${${$final_geno}{$chrom}}{$pos}) {### For test ###
+					print "(Main$stage)Error: undefined final_geno at Chrom:Pos $chrom:$pos\n";
+					next;
+				}
+				my @keys=keys %{${${$final_geno}{$chrom}}{$pos}};
+				print "(Main$stage)Test: @keys\n";### For test ###
+				if (scalar(@keys)<2 or scalar(@keys) >3) {
+					print STDERR "(Main$stage)Error: InvalidGenoCall\n";
+					print CLUSTERLOG $cluster_num."\tFail\t1\t$stage\tInvalidGenoCall\n";
+					next;
+				}
+				foreach my $ind_geno (@keys) {
+					if ($ind_geno=~/^[ABD]{1}$/) {
+						my $ind_allele=${${${$final_geno}{$chrom}}{$pos}}{$ind_geno};
+						if (exists ${$readids_by_alleles}{$chrom} and exists ${${$readids_by_alleles}{$chrom}}{$pos} and exists ${${${$readids_by_alleles}{$chrom}}{$pos}}{$ind_allele}) {
+							foreach my $read_id (@{${${${$readids_by_alleles}{$chrom}}{$pos}}{$ind_allele}}) {
+								${${$polymorphismreadids{$read_id}}{'gen'}}{$ind_geno}++;
+								if (exists ${$readsum}{$read_id}) {
+									${${$readsum}{$read_id}}{'shared'}=0;
+								}
+								else { ### For test ###
+									print STDERR "Warnings: not existed readsum readID: $read_id\n";
+								}
+							}
+						}
+						else {
+							print STDERR "(Main$stage)Error: AllelesNonExist: Chrom:Pos:Alleles $chrom:$pos:$ind_allele\n";
+							print CLUSTERLOG $cluster_num."\tFail\t1\t$stage\tAllelesNonExist\n";
+							next;
+						}
+					}
+					else {
+						print STDERR "(Main$stage)Error: NoABDGenoCall\n";
+						print CLUSTERLOG $cluster_num."\tFail\t1\t$stage\tNoABDGenoCall\n";
+						next;
+					}
+				}
+			}
+		}
 	}
 	if (1) {
 		print "(Main$stage)Test: Total mapped reads: ".$totalmappedreads."\n";
-		print "(Main$stage)Test: Total allelic reads: ".scalar(keys %{$polymorphismreadids})."\n";
+		print "(Main$stage)Test: Total allelic reads: ".scalar(keys %polymorphismreadids)."\n";
 		print GENOLOG "(Main$stage)Test: Total mapped reads: ".$totalmappedreads."\n";
-		print GENOLOG "(Main$stage)Test: Total allelic reads: ".scalar(keys %{$polymorphismreadids})."\n";
+		print GENOLOG "(Main$stage)Test: Total allelic reads: ".scalar(keys %polymorphismreadids)."\n";
 	}
 
 
@@ -1232,7 +1199,7 @@ while (my $cluster_line=<CLUSTER>) {
 ###Stage12: Bam2fastq2
 	$stage=12;
 	print "\n(Main$stage)Step: bam2fastq\n"; ### For test ###
-	my ($test_bam2fastq, $fastqfiles, $rgfpkms, $clusterfpkm)=&Bam2FastQ2($cluter_oribam, $inferred_genoploidy, $readsum, $polymorphismreadids, "$RunDir/Clust$cluster_num/reads", 1, 0, 1, $path_samtools);
+	my ($test_bam2fastq, $fastqfiles, $rgfpkms, $clusterfpkm)=&Bam2FastQ2($cluter_oribam, $inferred_genoploidy, $readsum, \%polymorphismreadids, "$RunDir/Clust$cluster_num/reads", 1, 0, 1, $path_samtools);
 	if (! $test_bam2fastq) {
 		print STDERR "(Main$stage)Error: Bam2FastQ2\n";
 		print CLUSTERLOG $cluster_num."\tFail\t1\t$stage\tBam2FastQ2\n";
@@ -1362,27 +1329,13 @@ while (my $cluster_line=<CLUSTER>) {
 		}
 	}
 =cut
-###Stage15: Cleaning
-	$stage=15;
-	print "\n(Main$stage)Step: cleaning\n"; ### For test ###
-	unless (chdir $RunDir) {
-		print STDERR "(Main$stage)Error: can not chdir to : $RunDir\n";
-		print CLUSTERLOG $cluster_num."\tFail\t1\t$stage\tChDirAtLAST\n";
+
+
+	unless (DeletePath("$RunDir/Clust$cluster_num")) {
+		print STDERR "(Main$stage)Error: DeletePATH: $RunDir/Clust$cluster_num\n";
+		print CLUSTERLOG $cluster_num."\tFail\t1\t$stage\tDeletePATH\n";
 		next;
 	}
-	if ($cleanlog) {
-#		sleep(2);
-		unlink glob "$RunDir/Clust$cluster_num/*";
-#		unless (rmtree("$RunDir/Clust$cluster_num")) {
-#			print STDERR "(Main$stage)Error: DeletePATH: $RunDir/Clust$cluster_num\n";
-#			print CLUSTERLOG $cluster_num."\tFail\t1\t$stage\tDeletePATH\n";
-#		}
-	}
-
-
-
-### Stage16: Ending
-	$stage=16;
 	print CLUSTERLOG $cluster_num."\tSucceed\t0\t$stage\t0\t$genomeinfer_from_reads\t$inferred_genoploidy\t\n";
 }
 close CLUSTER;
@@ -1519,7 +1472,7 @@ sub ReadFpkm {
 	my %RFseqid=();
 	map {$RFseqid{$_}++} @{$RFseqids_arrindex};
 	my ($RFfpkm1, $RFfpkm2, $RFfpkm3, $RFfpkm4)=(0, 0, 0, 0);
-	local *RFFPKMIN;
+
 	close RFFPKMIN if (defined fileno(RFFPKMIN));
 	unless (open(RFFPKMIN, "< $RFfpkmin")) {
 		print STDERR "${RFsubinfo}Error: can not open FPKM input\n";
@@ -1640,7 +1593,7 @@ sub GroupReads {
 
 	my $GRsubinfo="SUB(GroupReads)";
 #Format: %GRreadid_by_allele=(chr => (pos => (allele1 => @readIDs, allele2 => @readids)))
-#	my %GRreadid_by_allele=();
+	my %GRreadid_by_allele=();
 #Format: %GRreadfragments=(readid => (chrom => (pos => (geno1 => quality, geno2 => quality)));
 	my %GRreadfragments=();
 #Format: %GRreadid2genome=(readID=> ('A' =>1, 'B' =>1, 'C'=1))
@@ -1714,14 +1667,14 @@ sub GroupReads {
 		print "${GRsubinfo}Test: Number of variations on $GRchrom: ", scalar(@GRpositions), "\n" if ($debug or $verbose);
 		foreach my $GRind_pos (sort {$a <=> $b} @GRpositions) {
 			print "${GRsubinfo}Test:\t".$GRchrom, "\t", "Pos: $GRind_pos\tRef:${${${$GRaabbdd_vcfobj}{$GRchrom}}{$GRind_pos}}[0]\tVar:${${${$GRaabbdd_vcfobj}{$GRchrom}}{$GRind_pos}}[1]\tGen:${${${$GRaabbdd_vcfobj}{$GRchrom}}{$GRind_pos}}[2]", "\n" if ($debug or $verbose);
-#			my @GRallelearr=split(/\//, ${${${$GRaabbdd_vcfobj}{$GRchrom}}{$GRind_pos}}[2]);
-#			my %GRallelehash=();
-#			map {$GRallelehash{$_}++} @GRallelearr;
-#			my $GRnumallele=scalar(keys %GRallelehash);
-#			if ($GRnumallele<1 or $GRnumallele>3) {
-#				print STDERR "${GRsubinfo}Error: Chr:Pos $GRchrom:$GRind_pos: Number of allele <1 or >3\n";
-#				return 1;
-#			}
+			my @GRallelearr=split(/\//, ${${${$GRaabbdd_vcfobj}{$GRchrom}}{$GRind_pos}}[2]);
+			my %GRallelehash=();
+			map {$GRallelehash{$_}++} @GRallelearr;
+			my $GRnumallele=scalar(keys %GRallelehash);
+			if ($GRnumallele<1 or $GRnumallele>3) {
+				print STDERR "${GRsubinfo}Error: Chr:Pos $GRchrom:$GRind_pos: Number of allele <1 or >3\n";
+				return 1;
+			}
 			my $GRend_pos=$GRind_pos+length(${${${$GRaabbdd_vcfobj}{$GRchrom}}{$GRind_pos}}[0])-1;
 			my @GRchr_alignments=();
 			@GRchr_alignments= $GRaabbdd_samobj->get_features_by_location(-seq_id => "$GRchrom", -start => "$GRind_pos", -end => "$GRend_pos");
@@ -1729,7 +1682,7 @@ sub GroupReads {
 			foreach my $GRind_align (@GRchr_alignments) {
 				my $GRthisreadid=$GRind_align->name;
 				next if ($GRind_align->flag & 0x0004);
-				${$GRreadidsum{$GRthisreadid}}{'shared'}=0;# if ($GRnumallele>1);
+				${$GRreadidsum{$GRthisreadid}}{'shared'}=0 if ($GRnumallele>1);
 				next unless ($GRind_align->qual >= $min_mapq);
 				my $GRstrand='U';
 				if ($GRind_align->flag & 0x0040) {
@@ -1740,13 +1693,11 @@ sub GroupReads {
 				}
 				#$GRalelecode: this read contains which allele genotype (0(ref)/1/2/3/.)
 				my ($GRalelecode, $GRcapture_qual)=&ReadVariantType($GRind_pos, ${${${$GRaabbdd_vcfobj}{$GRchrom}}{$GRind_pos}}[0], ${${${$GRaabbdd_vcfobj}{$GRchrom}}{$GRind_pos}}[1], ${${${$GRaabbdd_vcfobj}{$GRchrom}}{$GRind_pos}}[2], $GRind_align, 2);
-				unless ($GRalelecode =~ /^\d+$/) {
-#				unless ($GRalelecode =~ /^\d+$/ and exists $GRallelehash{$GRalelecode}) {
+				unless ($GRalelecode =~ /^\d+$/ and exists $GRallelehash{$GRalelecode}) {
 					$GRalelecode='N';
-#					$GRcapture_qual='#';
-#					next;
+					$GRcapture_qual='#';
 				}
-#				if ($GRnumallele>1) {
+				if ($GRnumallele>1) {
 ###For HapCompass fragments  file
 					if (! defined $GRcapture_qual or length($GRcapture_qual) !=1) {
 						$GRcapture_qual='I'; ### The second highest phred+33 score
@@ -1762,11 +1713,11 @@ sub GroupReads {
 					else {
 						$GRreadfragments{$GRthisreadid}{$GRchrom}{$GRind_pos}{$GRstrand}{$GRalelecode}=$GRcapture_qual;
 					}
-#					push (@{${${$GRreadid_by_allele{$GRchrom}}{$GRind_pos}}{$GRalelecode}}, $GRthisreadid);
-#				}
-#				else {
-#					$GRreadfragments{$GRthisreadid}{$GRchrom}{$GRind_pos}{$GRstrand}{$GRalelecode}=$GRcapture_qual;
-#				}
+					push (@{${${$GRreadid_by_allele{$GRchrom}}{$GRind_pos}}{$GRalelecode}}, $GRthisreadid);
+				}
+				else {
+					$GRreadfragments{$GRthisreadid}{$GRchrom}{$GRind_pos}{$GRstrand}{$GRalelecode}=$GRcapture_qual;
+				}
 			}
 		}
 	}
@@ -1800,7 +1751,7 @@ sub GroupReads {
 		print "${GRsubinfo}Test: total reads low-quality: $GRtotalreads_lowqual\n";
 		print "${GRsubinfo}Test: total allelic reads: ", scalar(keys %GRreadfragments), "\n";
 	}
-	return (0, \%GRreadfragments, \%GRreadidsum);
+	return (0, \%GRreadfragments, \%GRreadidsum, \%GRreadid_by_allele);
 }
 
 
@@ -1881,13 +1832,12 @@ sub MergeRange {
 ###Global: $debug
 ###Dependency:&ExtractAllele
 ###Note
-### Return (0=successful, 1=ExtraAlleles, 2=InsufficientAlleles, 3=Unknown)
 sub FillInVariations {
-	my ($FIVfixallele_hashindex, $FIVvcf_obj, $FIVgenoploidy, $FIVpolymorphicstes, $FIVdepth)=@_;
-##Format: %{$FIVdepth}=(chr => pos => allele => depth)
+	my ($FIVfixallele_hashindex, $FIVvcf_obj, $FIVgenoploidy, $FIVpolymorphicstes)=@_;
 
-	my $FIVsubinfo ='SUB(FillInVariations)';
 ##COMMENT: Test SUB(FillInVariations) successful or not
+##Format: 0=successful, 1=ExtraAlleles, 2=InsufficientAlleles, 3=Unknown
+	my $FIVtest_cmd=0;
 	my $FIVneed_runcompass=0;###Test need to run next step compass (if there is any unfixed allele) or not (if all alleles are fixed);
 #	%{$FIVpolymorphicstes}{chr}{$pos}
 ##Format: %{$FIVfixallele_hashindex}=(chr => (pos => (A => allele/?, B=> allele/?, D => allele/?)))
@@ -1896,111 +1846,50 @@ sub FillInVariations {
 ##Format: $FIVfixed_geno{chr}->{pos}='0/1/0'; ('A/B/D')
 	my %FIVfixed_geno=();
 ##COMMENT: decide which subgenome to output
-	my %FIVgenohash=();
+	my ($FIVout_aa, $FIVout_bb, $FIVout_dd)=(0, 0, 0);
 	if ($FIVgenoploidy=~/A/) {
-		$FIVgenohash{'A'}++;
-#		print $FIVsubinfo, "AA\n"; ### For test ###
+		$FIVout_aa=1;
+#		print "AA\n"; ### For test ###
 	}
 	if ($FIVgenoploidy=~/B/) {
-		$FIVgenohash{'B'}++;
-#		print $FIVsubinfo, "BB\n"; ### For test ###
+		$FIVout_bb=1;
+#		print "BB\n"; ### For test ###
 	}
 	if ($FIVgenoploidy=~/D/) {
-		$FIVgenohash{'D'}++;
-#		print $FIVsubinfo, "DD\n"; ### For test ###
+		$FIVout_dd=1;
+#		print "DD\n"; ### For test ###
 	}
-	
-	my $FIVploidy=scalar(keys %FIVgenohash);
-	if ($FIVploidy<2 or $FIVploidy>3) {
-		print $FIVsubinfo, "Error: Total ploidy: $FIVploidy\n";### For test ###
+	my $FIVploidy=$FIVout_aa+$FIVout_bb+$FIVout_dd;
+	if ($FIVploidy<1 or $FIVploidy>3) {
+		print "SUB(FillInVariations)Error: Total ploidy: $FIVploidy\n";# if ($debug or $verbose);
 		return 1;
 	}
-#	print $FIVsubinfo, "Test: Total ploidy: $FIVploidy\n"; ### For test ###
-##COMMENT: Fill in unknown alleles
-	foreach my $FIVchrom (sort keys %{$FIVpolymorphicstes}) {
-		foreach my $FIVpos (sort keys %{${$FIVpolymorphicstes}{$FIVchrom}}) {
-			my @FIVallelecode=keys %{${$FIVpolymorphicstes}{$FIVchrom}{$FIVpos}};
-### Get read depth after clean
-			my %FIValleledep=();
-			foreach (@FIVallelecode) {
-				unless (exists ${$FIVdepth}{$FIVchrom} and exists ${$FIVdepth}{$FIVchrom}{$FIVpos} and exists ${$FIVdepth}{$FIVchrom}{$FIVpos}{$_} and ${$FIVdepth}{$FIVchrom}{$FIVpos}{$_}>0) {
-					print STDERR $FIVsubinfo, "Error: depth==0 at Chr:Pos:Allele $FIVchrom:$FIVpos:$_\n";
-					return 1;
-				}
-				$FIValleledep{$_}=${$FIVdepth}{$FIVchrom}{$FIVpos}{$_};
+	print "SUB(FillInVariations)Test: Total ploidy: $FIVploidy\n";# if ($debug or $verbose);
+##COMMENT: Fill in unknown alleles		
+	FIVBLOCK1: {foreach my $FIVchrom (keys %{$FIVvcf_obj}) {
+		my @FIVpositions=sort {$a<=>$b} (keys %{${$FIVvcf_obj}{$FIVchrom}});
+		print "SUB(FillInVariations)Test: Reference: $FIVchrom\n" if ($debug or $verbose);
+		print "SUB(FillInVariations)Test: Number of variations on $FIVchrom: ", scalar(@FIVpositions), "\n"  if ($debug or $verbose);
+		foreach my $FIVpos (@FIVpositions) {
+			print "SUB(FillInVariations)Test: chrom:pos: $FIVchrom:$FIVpos\n" if ($debug or $verbose);
+			print "SUB(FillInVariations)Test: @{${${$FIVvcf_obj}{$FIVchrom}}{$FIVpos}}\n" if ($debug or $verbose);
+			unless (exists ${$FIVpolymorphicstes}{$FIVchrom} and exists ${$FIVpolymorphicstes}{$FIVchrom}{$FIVpos}) {
+				print STDERR "SUB(FillInVariations)Test: Notpolymorphic site: chrom:pos: $FIVchrom:$FIVpos\n";# if ($debug or $verbose);
+				next;
 			}
-			unless (scalar(keys %FIValleledep)>1) {
-				print STDERR $FIVsubinfo, "Error: allele <1 at Chr:Pos $FIVchrom:$FIVpos\n";
-				return 1;
-			}
-###rephase geno hash
-			my @FIVvcfgeno=();
-			if (scalar(@FIVallelecode)==3) {
-				@FIVvcfgeno=@FIVallelecode;
-			}
-			elsif (scalar(@FIVallelecode)==2) {
-				@FIVvcfgeno=@FIVallelecode;
-				my $FIVmaxdepth=0;
-				my $maxcount=0;
-				my $FIVmaxallelecoce;
-				foreach (@FIVallelecode) {
-					if ($FIValleledep{$_}>$FIVmaxdepth) {
-						$FIVmaxdepth=$FIValleledep{$_};
-						$maxcount=1;
-						$FIVmaxallelecoce=$_;
-					}
-					elsif ($FIValleledep{$_}==$FIVmaxdepth) {
-						$maxcount++;
-					}
-				}
-				if (defined $FIVmaxallelecoce and $FIVmaxallelecoce=~/^\d+$/) {
-					push (@FIVvcfgeno, $FIVmaxallelecoce);
-				}
-				else {
-					if (exists ${$FIVvcf_obj}{$FIVchrom} and exists ${$FIVvcf_obj}{$FIVchrom}{$FIVpos} and defined ${${$FIVvcf_obj}{$FIVchrom}{$FIVpos}}[2] and ${${$FIVvcf_obj}{$FIVchrom}{$FIVpos}}[2]=~/^\d+\/\d+\/\d+$/) {
-						my @FIVvcf_thisgeno=split(/\//, ${${$FIVvcf_obj}{$FIVchrom}{$FIVpos}}[2]);
-						unless (scalar(@FIVvcf_thisgeno)==3) {
-							print STDERR $FIVsubinfo, "Error: genotype not triple in VCF at Chr:Pos:Geno $FIVchrom:$FIVpos:${${$FIVvcf_obj}{$FIVchrom}{$FIVpos}}[2]\n";
-							return 1;
-						}
-						my %FIVvcf_genohash=();
-						map {$FIVvcf_genohash{$_}++} @FIVvcf_thisgeno;
-						foreach (keys %FIVvcf_genohash) {
-							if ($FIVvcf_genohash{$_}>=2) {
-								push (@FIVvcfgeno, $_);
-							}
-						}
-					}
-					else {
-						print STDERR $FIVsubinfo, "Error: error to retrieve genotype in VCF at Chr:Pos $FIVchrom:$FIVpos\n";
-						return 1;
-					}
-				}
-			}
-			else {
-				print STDERR $FIVsubinfo, "Error: unknown fillin Ploidy: $FIVploidy AlleleNum: ".scalar(@FIVallelecode)." Allele @FIVallelecode at Chr:Pos $FIVchrom:$FIVpos\n";
-				return 1;
-			}
-			unless (scalar(@FIVvcfgeno)==3) {
-				print STDERR $FIVsubinfo, "Error: ploidy !=3 at Chr:Pos $FIVchrom:$FIVpos, @FIVvcfgeno\n";
-				return 1;
-			}
-###Format: %vcfgenohash=(0 => ++, 1=> ++, 2 => ++);
-			my %FIVvcfgenhash=();
-			map {$FIVvcfgenhash{$_}++} @FIVvcfgeno;
-			
+			my ($FIVref, $FIVvar, $FIVgenos)=@{${${$FIVvcf_obj}{$FIVchrom}}{$FIVpos}};
+			my ($FIVallele_hashindex, $FIVgeno_arrayindex)=&ExtractAllele($FIVref, $FIVvar, $FIVgenos, 3);
+			my @FIVgeno=@{$FIVgeno_arrayindex};
 			my $FIVnum_allele_notsure=0;
 			my ($FIVaa_alleles,$FIVbb_alleles,$FIVdd_alleles)=('?', '?', '?');
-			if (exists ${$FIVfillinalleles}{$FIVchrom} and exists ${$FIVfillinalleles}{$FIVchrom}{$FIVpos}) {
-				$FIVaa_alleles=${$FIVfillinalleles}{$FIVchrom}{$FIVpos}{'A'} if (exists ${$FIVfillinalleles}{$FIVchrom}{$FIVpos}{'A'});
-				$FIVbb_alleles=${$FIVfillinalleles}{$FIVchrom}{$FIVpos}{'B'} if (exists ${$FIVfillinalleles}{$FIVchrom}{$FIVpos}{'B'});
-				$FIVdd_alleles=${$FIVfillinalleles}{$FIVchrom}{$FIVpos}{'D'} if (exists ${$FIVfillinalleles}{$FIVchrom}{$FIVpos}{'D'});
-			}
+			$FIVaa_alleles=${${${$FIVfillinalleles}{$FIVchrom}}{$FIVpos}}{'A'} if (exists ${${${$FIVfillinalleles}{$FIVchrom}}{$FIVpos}}{'A'});
+			$FIVbb_alleles=${${${$FIVfillinalleles}{$FIVchrom}}{$FIVpos}}{'B'} if (exists ${${${$FIVfillinalleles}{$FIVchrom}}{$FIVpos}}{'B'});
+			$FIVdd_alleles=${${${$FIVfillinalleles}{$FIVchrom}}{$FIVpos}}{'D'} if (exists ${${${$FIVfillinalleles}{$FIVchrom}}{$FIVpos}}{'D'});
 			my ($FIVmissing_aa, $FIVmissing_bb, $FIVmissing_dd)=(0, 0, 0);
 			my %FIVallele_taken=();
-			if (exists $FIVgenohash{'A'}) {
-				if ($FIVaa_alleles =~/^\d+$/ and exists $FIVvcfgenhash{$FIVaa_alleles}) {
-					$FIVvcfgenhash{$FIVaa_alleles}--;
+			if ($FIVout_aa ==1) {
+				if ($FIVaa_alleles ne '?' and exists ${$FIVallele_hashindex}{$FIVaa_alleles}) {
+					${$FIVallele_hashindex}{$FIVaa_alleles}--;
 					$FIVallele_taken{$FIVaa_alleles}++;
 				}
 				else {
@@ -2008,9 +1897,9 @@ sub FillInVariations {
 					$FIVmissing_aa=1;
 				}
 			}
-			if (exists $FIVgenohash{'B'}) {
-				if ($FIVbb_alleles =~/^\d+$/ and exists $FIVvcfgenhash{$FIVbb_alleles}) {
-					$FIVvcfgenhash{$FIVbb_alleles}--;
+			if ($FIVout_bb ==1) {
+				if ($FIVbb_alleles ne '?' and exists ${$FIVallele_hashindex}{$FIVbb_alleles}) {
+					${$FIVallele_hashindex}{$FIVbb_alleles}--;
 					$FIVallele_taken{$FIVbb_alleles}++;
 				}
 				else {
@@ -2018,9 +1907,9 @@ sub FillInVariations {
 					$FIVmissing_bb=1;
 				}
 			}
-			if (exists $FIVgenohash{'D'}) {
-				if ($FIVdd_alleles =~/^\d+$/ and exists $FIVvcfgenhash{$FIVdd_alleles}) {
-					$FIVvcfgenhash{$FIVdd_alleles}--;
+			if ($FIVout_dd ==1) {
+				if ($FIVdd_alleles ne '?' and exists ${$FIVallele_hashindex}{$FIVdd_alleles}) {
+					${$FIVallele_hashindex}{$FIVdd_alleles}--;
 					$FIVallele_taken{$FIVdd_alleles}++;
 				}
 				else {
@@ -2029,18 +1918,19 @@ sub FillInVariations {
 				}
 			}
 			my @FIVallele_left=();
-			foreach (keys %FIVvcfgenhash) {
-				push (@FIVallele_left, $_) if ($FIVvcfgenhash{$_}>0);
+			foreach (keys %{$FIVallele_hashindex}) {
+				push (@FIVallele_left, $_) if (${$FIVallele_hashindex}{$_}>0);
 			}
 			if (scalar(@FIVallele_left)<1 and $FIVnum_allele_notsure>0) {
-				print STDERR $FIVsubinfo, "Error: no left allele at $FIVchrom:$FIVpos\n";###For test###
-				return 2;
+				$FIVtest_cmd=2;
+				print STDERR "SUB(FillInVariations)Error: no left allele at $FIVchrom:$FIVpos\n";###For test###
+				last FIVBLOCK1;
 			}
 			my @FIVarr_geno_fix=();
 			if ($FIVnum_allele_notsure==0) {
-				push (@FIVarr_geno_fix, ${$FIVfillinalleles}{$FIVchrom}{$FIVpos}{'A'}) if (exists $FIVgenohash{'A'});
-				push (@FIVarr_geno_fix, ${$FIVfillinalleles}{$FIVchrom}{$FIVpos}{'B'}) if (exists $FIVgenohash{'B'});
-				push (@FIVarr_geno_fix, ${$FIVfillinalleles}{$FIVchrom}{$FIVpos}{'D'}) if (exists $FIVgenohash{'D'});
+				push (@FIVarr_geno_fix, ${${${$FIVfillinalleles}{$FIVchrom}}{$FIVpos}}{'A'}) if ($FIVout_aa==1);
+				push (@FIVarr_geno_fix, ${${${$FIVfillinalleles}{$FIVchrom}}{$FIVpos}}{'B'}) if ($FIVout_bb==1);
+				push (@FIVarr_geno_fix, ${${${$FIVfillinalleles}{$FIVchrom}}{$FIVpos}}{'D'}) if ($FIVout_dd==1);
 			}
 			elsif ($FIVnum_allele_notsure==1) {
 				if (scalar(@FIVallele_left)!=1) {
@@ -2049,218 +1939,90 @@ sub FillInVariations {
 						push (@FIVallele_left_new, $_) unless (exists $FIVallele_taken{$_});
 					}
 					if (scalar(@FIVallele_left_new)!=1) {
-						print STDERR $FIVsubinfo, "Error: extra at $FIVchrom: $FIVpos\n";###For test###
+						$FIVtest_cmd=1;
+						print STDERR "SUB(FillInVariations)Error: extra at $FIVchrom: $FIVpos\n";###For test###
 						print "AllelesLeft: @FIVallele_left_new\nAlleleNum: $FIVnum_allele_notsure\n";###For test###
-						return 1;
+						last FIVBLOCK1;
 					}
 					else {
 						@FIVallele_left=@FIVallele_left_new;
 					}
 				}
-				${$FIVfillinalleles}{$FIVchrom}{$FIVpos}{'A'}=shift @FIVallele_left if ($FIVmissing_aa ==1);
-				${$FIVfillinalleles}{$FIVchrom}{$FIVpos}{'B'}=shift @FIVallele_left if ($FIVmissing_bb ==1);
-				${$FIVfillinalleles}{$FIVchrom}{$FIVpos}{'D'}=shift @FIVallele_left if ($FIVmissing_dd ==1);
-				push (@FIVarr_geno_fix, ${$FIVfillinalleles}{$FIVchrom}{$FIVpos}{'A'}) if (exists $FIVgenohash{'A'});
-				push (@FIVarr_geno_fix, ${$FIVfillinalleles}{$FIVchrom}{$FIVpos}{'B'}) if (exists $FIVgenohash{'B'});
-				push (@FIVarr_geno_fix, ${$FIVfillinalleles}{$FIVchrom}{$FIVpos}{'D'}) if (exists $FIVgenohash{'D'});
+				${${${$FIVfillinalleles}{$FIVchrom}}{$FIVpos}}{'A'}=shift @FIVallele_left if ($FIVmissing_aa ==1);
+				${${${$FIVfillinalleles}{$FIVchrom}}{$FIVpos}}{'B'}=shift @FIVallele_left if ($FIVmissing_bb ==1);
+				${${${$FIVfillinalleles}{$FIVchrom}}{$FIVpos}}{'D'}=shift @FIVallele_left if ($FIVmissing_dd ==1);
+				push (@FIVarr_geno_fix, ${${${$FIVfillinalleles}{$FIVchrom}}{$FIVpos}}{'A'}) if ($FIVout_aa==1);
+				push (@FIVarr_geno_fix, ${${${$FIVfillinalleles}{$FIVchrom}}{$FIVpos}}{'B'}) if ($FIVout_bb==1);
+				push (@FIVarr_geno_fix, ${${${$FIVfillinalleles}{$FIVchrom}}{$FIVpos}}{'D'}) if ($FIVout_dd==1);
 			}
 			elsif ($FIVnum_allele_notsure==2) {
-				my $uniqueallele=0;
 				if (scalar(@FIVallele_left)==1){###Check if only one allele left
 					$FIVallele_left[1]=$FIVallele_left[0];
-					$uniqueallele=1;
 				}
 				if (scalar(@FIVallele_left)!=2) {###check if two allele left, return error if not
-					print STDERR $FIVsubinfo, "Error: extra at $FIVchrom: $FIVpos\n";###For test###
+					$FIVtest_cmd=1;
+					print STDERR "SUB(FillInVariations)Error: extra at $FIVchrom: $FIVpos\n";###For test###
 					print "AllelesLeft: @FIVallele_left\nAlleleNum: $FIVnum_allele_notsure\n";###For test###
-					return 1;
+					last FIVBLOCK1;
 				}
 				my ($FIVallele_aa,$FIVallele_bb, $FIVallele_dd)=('?', '?', '?');
-				if (exists $FIVgenohash{'A'}) {
+				if ($FIVout_aa==1) {
 					if ($FIVmissing_aa ==1 and scalar(@FIVallele_left)>0) {
 						$FIVallele_aa=shift @FIVallele_left;
-						if ($uniqueallele) {
-							${$FIVfillinalleles}{$FIVchrom}{$FIVpos}{'A'}=$FIVallele_aa;
-						}
-						else {
-							$FIVneed_runcompass=1;
-						}
+						$FIVneed_runcompass=1;
 					}
-					elsif (exists ${$FIVfillinalleles}{$FIVchrom} and exists ${$FIVfillinalleles}{$FIVchrom}{$FIVpos} and exists ${$FIVfillinalleles}{$FIVchrom}{$FIVpos}{'A'}) {
-						$FIVallele_aa=${$FIVfillinalleles}{$FIVchrom}{$FIVpos}{'A'};
+					elsif (exists ${${${$FIVfillinalleles}{$FIVchrom}}{$FIVpos}}{'A'}) {
+						$FIVallele_aa=${${${$FIVfillinalleles}{$FIVchrom}}{$FIVpos}}{'A'};
 					}
 					else {
-						print STDERR $FIVsubinfo, "Error: AA allele at $FIVchrom: $FIVpos\n";###For test###
-						return 3;
+						$FIVtest_cmd=3;
+						print STDERR "SUB(FillInVariations)Error: AA allele at $FIVchrom: $FIVpos\n";###For test###
+						last FIVBLOCK1;
 					}
 					push (@FIVarr_geno_fix, $FIVallele_aa);
 				}
-				if (exists $FIVgenohash{'B'}) {
+				if ($FIVout_bb==1) {
 					if ($FIVmissing_bb ==1 and scalar(@FIVallele_left)>0) {
 						$FIVallele_bb=shift @FIVallele_left;
-						if ($uniqueallele) {
-							${$FIVfillinalleles}{$FIVchrom}{$FIVpos}{'B'}=$FIVallele_bb;
-						}
-						else {
-							$FIVneed_runcompass=1;
-						}
+						$FIVneed_runcompass=1;
 					}
-					elsif (exists ${$FIVfillinalleles}{$FIVchrom} and exists ${$FIVfillinalleles}{$FIVchrom}{$FIVpos} and exists ${$FIVfillinalleles}{$FIVchrom}{$FIVpos}{'B'}) {
-						$FIVallele_bb=${$FIVfillinalleles}{$FIVchrom}{$FIVpos}{'B'};
+					elsif (exists ${${${$FIVfillinalleles}{$FIVchrom}}{$FIVpos}}{'B'}) {
+						$FIVallele_bb=${${${$FIVfillinalleles}{$FIVchrom}}{$FIVpos}}{'B'};
 					}
 					else {
-						print STDERR $FIVsubinfo, "Error: BB allele at $FIVchrom: $FIVpos\n";###For test###
-						return 3;
+						$FIVtest_cmd=3;
+						print STDERR "SUB(FillInVariations)Error: BB allele at $FIVchrom: $FIVpos\n";###For test###
+						last FIVBLOCK1;
 					}
 					push (@FIVarr_geno_fix, $FIVallele_bb);
 				}
-				if (exists $FIVgenohash{'D'}) {
+				if ($FIVout_dd==1) {
 					if ($FIVmissing_dd ==1 and scalar(@FIVallele_left)>0) {
 						$FIVallele_dd=shift @FIVallele_left;
-						if ($uniqueallele) {
-							${$FIVfillinalleles}{$FIVchrom}{$FIVpos}{'D'}=$FIVmissing_dd;
-						}
-						else {
-							$FIVneed_runcompass=1;
-						}
+						$FIVneed_runcompass=1;
 					}
-					elsif (exists ${$FIVfillinalleles}{$FIVchrom} and exists ${$FIVfillinalleles}{$FIVchrom}{$FIVpos} and exists ${$FIVfillinalleles}{$FIVchrom}{$FIVpos}{'D'}) {
-						$FIVallele_dd=${$FIVfillinalleles}{$FIVchrom}{$FIVpos}{'D'};
+					elsif (exists ${${${$FIVfillinalleles}{$FIVchrom}}{$FIVpos}}{'D'}) {
+						$FIVallele_dd=${${${$FIVfillinalleles}{$FIVchrom}}{$FIVpos}}{'D'};
 					}
 					else {
-						print STDERR $FIVsubinfo, "Error: DD allele at $FIVchrom: $FIVpos\n";###For test###
-						return 3;
+						$FIVtest_cmd=3;
+						print STDERR "SUB(FillInVariations)Error: DD allele at $FIVchrom: $FIVpos\n";###For test###
+						last FIVBLOCK1;
 					}
 					push (@FIVarr_geno_fix, $FIVallele_dd);
 				}
 			}
 			elsif ($FIVnum_allele_notsure==3) {
-				@FIVarr_geno_fix=@FIVvcfgeno;
+				@FIVarr_geno_fix=@FIVgeno;
 				$FIVneed_runcompass=1;
 			}
 			${$FIVfixed_geno{$FIVchrom}}{$FIVpos}=join('/', @FIVarr_geno_fix);
-#			print $FIVsubinfo, "Test: Fixed Alleles: ".${$FIVfixed_geno{$FIVchrom}}{$FIVpos}."\t$FIVchrom: $FIVpos\n";# if ($debug);
+			print "SUB(FillInVariations)Test: Fixed Alleles: ".${$FIVfixed_geno{$FIVchrom}}{$FIVpos}."\t$FIVchrom: $FIVpos\n";# if ($debug);
 		}
-	}
-	return (0, $FIVneed_runcompass, \%FIVfixed_geno, $FIVfillinalleles);
-}		
-
-
-
-### Get polymorphic reads for each geno
-### &GetPolymorphicReads($fragment_corrected, $GPRfinalgeno)
-### Global: 
-### Dependency: 
-### Note:
-sub GetPolymorphicReads {
-	my ($GPRcorrfrag, $GPRfinalgeno)=@_;
-	
-	my $GPRsubinfo='SUB(GetPolymorphicReads)';
-##Format: %GPRexcludedreads=(readid => ++);
-	my %GPRexcludedreads=();
-##Format: %GPRcoveredsites=(chr => pos => allele => ++);
-	my %GPRcoveredsites=();
-##Format: %GPRreadcount=('A' => ++, 'B' => ++, 'D' => ++)
-	my %GPRreadcount=('A' => 0, 'B' => 0, 'D' => 0);
-	
-##Format: %{$GPRfinalgeno}=(chr => (pos => (A => allele/?, B=> allele/?, D => allele/?)))
-##Format: %{$GPRcorrfrag}=($readid => chrom => $partstart => $pos => $allele => $qual);
-##Format: %GPRpolymorphismreadids=(readid => ('gen' => ( 'A' => ++, 'B' => ++, 'D' => ++),
-	my %GPRpolymorphismreadids=();
-	
-	my $errorcode=0;
-	READID14: {foreach my $GPRthisreadid (keys %{$GPRcorrfrag}) {
-		my %GPRassignreads=();
-		my %GPRthisreadsites=();
-		foreach my $GPRthischrom (keys %{${$GPRcorrfrag}{$GPRthisreadid}}) {
-			foreach my $thisstart (keys %{${$GPRcorrfrag}{$GPRthisreadid}{$GPRthischrom}}) {
-				foreach my $GPRthispos (keys %{${$GPRcorrfrag}{$GPRthisreadid}{$GPRthischrom}{$thisstart}}) {
-					my @GPRthisallelearr=keys %{${$GPRcorrfrag}{$GPRthisreadid}{$GPRthischrom}{$thisstart}{$GPRthispos}};
-					unless (scalar(@GPRthisallelearr)==1 and defined $GPRthisallelearr[0] and $GPRthisallelearr[0]=~/^\d+$/) {
-						print STDERR $GPRsubinfo, "Error: invalid allele at: Read:Chrom:Pos:Alleles $GPRthischrom:$thisstart:$GPRthispos:@GPRthisallelearr\n";
-						$errorcode++;
-						last READID14;
-					}
-					my $thisallelecode=shift @GPRthisallelearr;
-					$GPRthisreadsites{$GPRthischrom}{$GPRthispos}{$thisallelecode}++;
-					if (exists ${$GPRfinalgeno}{$GPRthischrom} and exists ${$GPRfinalgeno}{$GPRthischrom}{$GPRthispos}) {
-						if (exists ${$GPRfinalgeno}{$GPRthischrom}{$GPRthispos}{'A'} and ${$GPRfinalgeno}{$GPRthischrom}{$GPRthispos}{'A'}=~/^\d+$/) {
-							if ($thisallelecode eq ${$GPRfinalgeno}{$GPRthischrom}{$GPRthispos}{'A'}) {
-								$GPRassignreads{'A'}{'include'}++;
-							}
-							else {
-								$GPRassignreads{'A'}{'exclude'}++;
-							}
-						}
-						if (exists ${$GPRfinalgeno}{$GPRthischrom}{$GPRthispos}{'B'} and ${$GPRfinalgeno}{$GPRthischrom}{$GPRthispos}{'B'}=~/^\d+$/) {
-							if ($thisallelecode eq ${$GPRfinalgeno}{$GPRthischrom}{$GPRthispos}{'B'}) {
-								$GPRassignreads{'B'}{'include'}++;
-							}
-							else {
-								$GPRassignreads{'B'}{'exclude'}++;
-							}
-						}
-						if (exists ${$GPRfinalgeno}{$GPRthischrom}{$GPRthispos}{'D'} and ${$GPRfinalgeno}{$GPRthischrom}{$GPRthispos}{'D'}=~/^\d+$/) {
-							if ($thisallelecode eq ${$GPRfinalgeno}{$GPRthischrom}{$GPRthispos}{'D'}) {
-								$GPRassignreads{'D'}{'include'}++;
-							}
-							else {
-								$GPRassignreads{'D'}{'exclude'}++;
-							}
-						}
-					}
-					else {
-						print STDERR $GPRsubinfo, "Error: not existed Read:Chr:Pos $GPRthisreadid:$GPRthischrom:$GPRthispos in \%finalgeno\n";
-						$errorcode++;
-						next READID14;
-					}
-				}
-			}
-		}
-		my @GPRthisread2geno=();
-		foreach my $GPRgeno (keys %GPRassignreads) {
-			unless (exists $GPRassignreads{$GPRgeno}{'include'}) {
-				push (@GPRthisread2geno, $GPRgeno);
-			}
-		}
-		if (scalar(@GPRthisread2geno)==0) {
-			$GPRexcludedreads{$GPRthisreadid}++;
-		}
-		else {
-			foreach (@GPRthisread2geno) {
-				$GPRpolymorphismreadids{$GPRthisreadid}{'gen'}{$_}++;
-				$GPRreadcount{$_}++;
-			}
-			
-			foreach my $GPRindchr (keys %GPRthisreadsites) {
-				foreach my $GPRindpos (keys %{$GPRthisreadsites{$GPRindchr}}) {
-					foreach my $GPRindallele (keys %{$GPRthisreadsites{$GPRindchr}{$GPRindpos}}) {
-						$GPRcoveredsites{$GPRindchr}{$GPRindpos}{$GPRindallele}++;
-					}
-				}
-			}
-		}
-	}}###READID14
-	if ($errorcode) {
-		print STDERR $GPRsubinfo, "Error: errorcode==1\n";
-		return 0;
-	}
-	if (0) {
-		print $GPRsubinfo, "Test: \%GPRpolymorphismreadids\n";
-		print Dumper \%GPRpolymorphismreadids;
-		print "\n";
-		print $GPRsubinfo, "Test: \%GPRexcludedreads\n";
-		print Dumper \%GPRexcludedreads;
-		print "\n";
-		print $GPRsubinfo, "Test: \%GPRcoveredsites\n";
-		print Dumper \%GPRcoveredsites;
-		print "\n";
-	}
-	foreach (sort keys %GPRreadcount) {
-		print $GPRsubinfo, "Info: Geno:NumReads $_ $GPRreadcount{$_}\n";
-	}
-	return (1, \%GPRpolymorphismreadids)
+	}}###FIVBLOCK1;
+	return ($FIVtest_cmd, $FIVneed_runcompass, \%FIVfixed_geno, $FIVfillinalleles);
 }
+
 
 
 
@@ -2272,9 +2034,6 @@ sub GetPolymorphicReads {
 ### Note: [RGaware] 0=false; 1=true
 sub Bam2FastQ2 {
 	my ($BFQbamin, $BFQgeno, $BFQreadsum, $BFQallelicreads, $BFQoutfqprefix, $BFQmapcode, $BFQmapq, $BFQrg_aware, $BFQpath_samtools)=@_;
-	
-	local *BAMIN; local *BAMOUT; local *BAMKEEP; local *BAMSHARE; local *BAMALLELIC; local *BAMAA;local *BAMBB; local *BAMDD;
-	local *ALLFQ; local *SHAREOUT; local *FQOUT;
 #Formar: %$BFQreadsum=(readid => ('gen' => ( 'A' => ++, 'B' => ++, 'D' => ++), 
 #								'chr' => ( '1AL' => ++, '!BL' => ++, '2DL' => ++, ...),
 #								'shared' => ++/0,
@@ -2288,7 +2047,7 @@ sub Bam2FastQ2 {
 	$BFQmapcode=0 unless (defined $BFQmapcode);
 	$BFQmapq=0 unless (defined $BFQmapq);
 	$BFQrg_aware=0 unless (defined $BFQrg_aware);
-	my %BFQexcludedreads=();
+	my %excludedreads=();
 	my $BamKit_failure=0;
 	my $BamKit_success=1;
 ##Format: %returnhash=(A => "A.fastq", B => b.fastq, D => D.fastq);
@@ -2325,11 +2084,10 @@ sub Bam2FastQ2 {
 		print STDERR "${BFQsubinfo}Error: unknown geno code: $BFQgeno\n";
 		return $BamKit_failure;
 	}
-	$BFQgenos{'A'}++ if ($BFQgeno=~/A/);
-	$BFQgenos{'B'}++ if ($BFQgeno=~/B/);
-	$BFQgenos{'D'}++ if ($BFQgeno=~/D/);
+	$BFQgenos{'A'}++ if (defined $BFQgeno and $BFQgeno=~/A/);
+	$BFQgenos{'B'}++ if (defined $BFQgeno and $BFQgeno=~/B/);
+	$BFQgenos{'D'}++ if (defined $BFQgeno and $BFQgeno=~/D/);
 #	print "${BFQsubinfo}Test: \t"; map {print "Geno: $_\t"} (keys %BFQgenos); print "\n";### For test ###
-	
 	close BAMIN if (defined fileno(BAMIN));
 	unless (open(BAMIN, "$BFQpath_samtools view -h $BFQbamin | ")) {
 		print STDERR "${BFQsubinfo}Error: open BAM: $BFQbamin \n";
@@ -2357,27 +2115,6 @@ sub Bam2FastQ2 {
 			print STDERR "${BFQsubinfo}Error: write BAM: $BFQbamin.allelic.bam \n";
 			return $BamKit_failure;
 		}
-		if (exists $BFQgenos{'A'}) {
-			close BAMAA if (defined fileno(BAMAA));
-			unless (open(BAMAA, " | samtools view -bhS - > $BFQbamin.AA.bam")) {
-				print STDERR "${BFQsubinfo}Error: write BAM: $BFQbamin.AA.bam \n";
-				return $BamKit_failure;
-			}
-		}
-		if (exists $BFQgenos{'B'}) {
-			close BAMBB if (defined fileno(BAMBB));
-			unless (open(BAMBB, " | samtools view -bhS - > $BFQbamin.BB.bam")) {
-				print STDERR "${BFQsubinfo}Error: write BAM: $BFQbamin.BB.bam \n";
-				return $BamKit_failure;
-			}
-		}
-		if (exists $BFQgenos{'D'}) {
-			close BAMDD if (defined fileno(BAMDD));
-			unless (open(BAMDD, " | samtools view -bhS - > $BFQbamin.DD.bam")) {
-				print STDERR "${BFQsubinfo}Error: write BAM: $BFQbamin.DD.bam \n";
-				return $BamKit_failure;
-			}
-		}
 	}
 	my $BFQnumline=0;
 	while (my $BFQline1=<BAMIN>) {
@@ -2393,9 +2130,6 @@ sub Bam2FastQ2 {
 				print BAMKEEP $BFQline1."\n";
 				print BAMSHARE $BFQline1."\n";
 				print BAMALLELIC $BFQline1."\n";
-				print BAMAA $BFQline1."\n" if (exists $BFQgenos{'A'});
-				print BAMBB $BFQline1."\n" if (exists $BFQgenos{'B'});
-				print BAMDD $BFQline1."\n" if (exists $BFQgenos{'D'});
 			}
 			next;
 		}
@@ -2430,7 +2164,7 @@ sub Bam2FastQ2 {
 			}
 			else {
 				print STDERR "${BFQsubinfo}Warnings: $BFQarr[0] no 'gen' key in BFQallelicreads\n";
-				$BFQexcludedreads{$BFQarr[0]}++;
+				$excludedreads{$BFQarr[0]}++;
 				print BAMOUT $BFQline1."\n";
 				next;
 			}
@@ -2439,7 +2173,7 @@ sub Bam2FastQ2 {
 			}
 			if (scalar(@BFQthisread_gens)<1 or scalar(@BFQthisread_gens)>3) {
 #				print STDERR "${BFQsubinfo}Warnings: no subgenome assignments for read $BFQarr[0] at Chrom: Pos $BFQarr[2]:$BFQarr[3]\n";### For test ###
-				$BFQexcludedreads{$BFQarr[0]}++;
+				$excludedreads{$BFQarr[0]}++;
 				print BAMOUT $BFQline1."\n";
 				next;
 			}
@@ -2448,30 +2182,14 @@ sub Bam2FastQ2 {
 		if ($BFQis_shared==0 and $BFQis_allelic==0) {
 #			print STDERR "${BFQsubinfo}Warnings: read ($BFQarr[0]) is neither shared or allelic at Chrom:Pos $BFQarr[2]:$BFQarr[3]\n";
 			print BAMOUT $BFQline1."\n";
-			$BFQexcludedreads{$BFQarr[0]}++;
+			$excludedreads{$BFQarr[0]}++;
 			next;
 		}
 		elsif ($BFQis_shared==1 and $BFQis_allelic==1) {
 			print STDERR "${BFQsubinfo}Warnings: read ($BFQarr[0]) is both shared and allelic at Chrom:Pos $BFQarr[2]:$BFQarr[3]\n";
 			print BAMOUT $BFQline1."\n";
-			$BFQexcludedreads{$BFQarr[0]}++;
+			$excludedreads{$BFQarr[0]}++;
 			next;
-		}
-		elsif ($BFQis_shared==1) {
-			if ($BFQouttestbam) {
-				print BAMAA $BFQline1."\n" if (exists $BFQgenos{'A'});
-				print BAMBB $BFQline1."\n" if (exists $BFQgenos{'B'});
-				print BAMDD $BFQline1."\n" if (exists $BFQgenos{'D'});
-			}
-		}
-		elsif ($BFQis_allelic==1) {
-			if ($BFQouttestbam) {
-				if (exists ${$BFQallelicreads}{$BFQarr[0]} and exists ${$BFQallelicreads}{$BFQarr[0]}{'gen'}) {
-					print BAMAA $BFQline1."\n" if (exists $BFQgenos{'A'} and exists ${$BFQallelicreads}{$BFQarr[0]}{'gen'}{'A'});
-					print BAMBB $BFQline1."\n" if (exists $BFQgenos{'B'} and exists ${$BFQallelicreads}{$BFQarr[0]}{'gen'}{'B'});
-					print BAMDD $BFQline1."\n" if (exists $BFQgenos{'D'} and exists ${$BFQallelicreads}{$BFQarr[0]}{'gen'}{'D'});
-				}
-			}
 		}
 #check if mapped
 		if ($BFQmapcode==1) {
@@ -2564,18 +2282,13 @@ sub Bam2FastQ2 {
 		close BAMKEEP;
 		close BAMSHARE;
 		close BAMALLELIC;
-		close BAMAA;
-		close BAMBB;
-		close BAMDD;
 	}
-	print "${BFQsubinfo}Warnings: excluded reads num: ".scalar(keys %BFQexcludedreads)."\n";
+	print "${BFQsubinfo}Warnings: excluded reads num: ".scalar(keys %excludedreads)."\n";
 
 ###Output fastq (shared)
 	my $BFQshared_fastq=$BFQoutfqprefix.'.shared.fastq';
 	my $BFQallfastq=$BFQoutfqprefix.'.all.fastq';
 	unlink $BFQshared_fastq if (-e $BFQshared_fastq);
-	
-	my $BFQnumshared=0;
 	close ALLFQ if (defined fileno(ALLFQ));
 	unless (open(ALLFQ, "> $BFQallfastq")) {
 		print STDERR "${BFQsubinfo}Error: can not write ALL Fastq: $BFQallfastq\n";
@@ -2588,7 +2301,6 @@ sub Bam2FastQ2 {
 	}
 	foreach my $BFQreadid_shared (keys %{$BFQreadsum}) {
 		if (exists ${${$BFQreadsum}{$BFQreadid_shared}}{'shared'} and ${${$BFQreadsum}{$BFQreadid_shared}}{'shared'}>0 and exists ${${$BFQreadsum}{$BFQreadid_shared}}{'reads'}) {
-			$BFQnumshared++;
 			if (exists ${${${$BFQreadsum}{$BFQreadid_shared}}{'reads'}}{1}) {
 				my ($BFQseq, $BFQqual)=@{${${${$BFQreadsum}{$BFQreadid_shared}}{'reads'}}{1}};
 				print SHAREOUT '@'.$BFQreadid_shared."/1\n$BFQseq\n+\n$BFQqual\n";
@@ -2607,8 +2319,6 @@ sub Bam2FastQ2 {
 		}
 	}
 	close SHAREOUT;
-###Output Allele FQ
-	my %BFQcount_geno2reads=('A' => 0, 'B' => 0, 'D' => 0);
 	foreach my $BFQind_gen (keys %BFQgenos) {
 		my $BFQname=$BFQoutfqprefix.'.'.$BFQind_gen.'.fastq';
 		unlink $BFQname if (-e $BFQname);
@@ -2623,21 +2333,19 @@ sub Bam2FastQ2 {
 			return $BamKit_failure;
 		}
 		foreach my $BFQreadid_allelic (keys %{$BFQallelicreads}) {
-			next unless (exists ${$BFQallelicreads}{$BFQreadid_allelic}{'gen'} and exists ${$BFQallelicreads}{$BFQreadid_allelic}{'gen'}{$BFQind_gen} and ${$BFQallelicreads}{$BFQreadid_allelic}{'gen'}{$BFQind_gen}>0);
-			$BFQcount_geno2reads{$BFQind_gen}++;
-			if (exists ${${$BFQallelicreads}{$BFQreadid_allelic}}{'reads'}) {
-				if (exists ${${${$BFQallelicreads}{$BFQreadid_allelic}}{'reads'}}{1}) {
-					my ($BFQseq, $BFQqual)=@{${${${$BFQallelicreads}{$BFQreadid_allelic}}{'reads'}}{1}};
+			if (exists ${${$BFQallelicreads}{readid_allelic}}{'reads'}) {
+				if (exists ${${${$BFQallelicreads}{readid_allelic}}{'reads'}}{1}) {
+					my ($BFQseq, $BFQqual)=@{${${${$BFQallelicreads}{readid_allelic}}{'reads'}}{1}};
 					print FQOUT '@'.$BFQreadid_allelic."/1\n$BFQseq\n+\n$BFQqual\n";
 					print ALLFQ '@'.$BFQreadid_allelic."/1\n$BFQseq\n+\n$BFQqual\n";
 				}
-				if (exists ${${${$BFQallelicreads}{$BFQreadid_allelic}}{'reads'}}{2}) {
-					my ($BFQseq, $BFQqual)=@{${${${$BFQallelicreads}{$BFQreadid_allelic}}{'reads'}}{2}};
+				if (exists ${${${$BFQallelicreads}{readid_allelic}}{'reads'}}{2}) {
+					my ($BFQseq, $BFQqual)=@{${${${$BFQallelicreads}{readid_allelic}}{'reads'}}{2}};
 					print FQOUT '@'.$BFQreadid_allelic."/1\n$BFQseq\n+\n$BFQqual\n";
 					print ALLFQ '@'.$BFQreadid_allelic."/1\n$BFQseq\n+\n$BFQqual\n";
 				}
-				if (exists ${${${$BFQallelicreads}{$BFQreadid_allelic}}{'reads'}}{'U'}) {
-					my ($BFQseq, $BFQqual)=@{${${${$BFQallelicreads}{$BFQreadid_allelic}}{'reads'}}{'U'}};
+				if (exists ${${${$BFQallelicreads}{readid_allelic}}{'reads'}}{'U'}) {
+					my ($BFQseq, $BFQqual)=@{${${${$BFQallelicreads}{readid_allelic}}{'reads'}}{'U'}};
 					print FQOUT '@'.$BFQreadid_allelic."/1\n$BFQseq\n+\n$BFQqual\n";
 					print ALLFQ '@'.$BFQreadid_allelic."/1\n$BFQseq\n+\n$BFQqual\n";
 				}
@@ -2652,9 +2360,6 @@ sub Bam2FastQ2 {
 		}
 	}
 	close ALLFQ;
-	foreach (sort keys %BFQcount_geno2reads) {
-		print STDERR $BFQsubinfo, "Info: NumReads(Geno:Shared:Allelic) $_:$BFQnumshared:$BFQcount_geno2reads{$_}\n";
-	}
 	
 ### Calculate GetGenomeSize
 	my ($BFQtest_cmd_genomesize, $BFQgenomesize)=&GetGenomeSize($BFQallfastq);
@@ -2822,16 +2527,10 @@ sub GetGenomeSize {
 	my ($GGSfastq, $GGSprefix, $GGSaddcmd, $GGSpath_kmergenie)=@_;
 	
 	my $GGSsubinfo='SUB(GetGenomeSize)';
-	$GGSprefix="$RunDir/kmergenie/MyFastq" unless (defined $GGSprefix);
+	$GGSprefix='MyFastq' unless (defined $GGSprefix);
 	$GGSpath_kmergenie='kmergenie' unless (defined $GGSpath_kmergenie);
 	$GGSaddcmd= ' -l 27 -k 87 -o '.$GGSprefix.' ' unless (defined $GGSaddcmd);
 	my $GGSgenomesize=0;
-	local *GGSIN;
-	
-	my @GGoldfiles=glob "$RunDir/kmergenie/*";
-	foreach (@GGoldfiles){
-		unlink @GGoldfiles if (-e @GGoldfiles);
-	}
 	
 	unless (defined $GGSfastq and -s $GGSfastq) {
 		print STDERR "${GGSsubinfo}Error: invalid fastq input\n";

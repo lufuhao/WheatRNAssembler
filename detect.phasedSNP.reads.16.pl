@@ -1,6 +1,7 @@
 #!/usr/bin/env perl
 use strict;
 use warnings;
+use lib '/usr/users/celldev/luf/bin/webperl/perl5lib/20150917';
 use Cwd;
 use FindBin qw($Bin);
 use Getopt::Long;
@@ -493,7 +494,9 @@ my $cluster_num=0;###for quick find which line/cluster has problem
 my @cluster_seqids=();###
 while (my $cluster_line=<CLUSTER>) {
 	chomp $cluster_line;
-	$cluster_num++;
+	@cluster_seqids=(); ###Empty this in case of abnormal duplicates
+	@cluster_seqids=split(/\s+/, $cluster_line);
+	$cluster_num=shift @cluster_seqids;
 
 ### Step0: control which lines to reads: --list
 	my $stage=0;
@@ -510,8 +513,7 @@ while (my $cluster_line=<CLUSTER>) {
 	print GENOLOG "\n\n\nCluster$cluster_num: $cluster_line\n";
 	print "\n\n\n\n\n##### Prcessing Cluster $cluster_num ###\n$cluster_line\n";
 	print STDERR "\n\n\n\n\n##### Prcessing Cluster $cluster_num ###\n$cluster_line\n";
-	@cluster_seqids=(); ###Empty this in case of abnormal duplicates
-	@cluster_seqids=split(/\s+/, $cluster_line);
+
 ##COMMENT: Check if empty line
 	if (scalar(@cluster_seqids)<1) {
 		print STDERR "(Main2)Warnings: line $cluster_num in $file_cluster ignored as empty\n";
