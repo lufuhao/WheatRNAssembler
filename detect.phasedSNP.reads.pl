@@ -2,7 +2,6 @@
 use strict;
 use warnings;
 use Cwd;
-use FindBin qw($Bin);
 use Getopt::Long;
 use Bio::DB::Sam;
 use Scalar::Util;
@@ -12,10 +11,10 @@ use constant USAGE=><<EOH;
 SYNOPSIS:
 
 perl $0 --input my.fa [Options]
-Version: LUFUHAO20150112
+Version: LUFUHAO20141203
 
 Requirements:
-	Programs: hapcompass.jar hc2vcf.jar
+	Programs:
 	Modiles: Scalar::Util, Cwd, Getopt::Long, FindBin
 
 Descriptions:
@@ -65,7 +64,7 @@ GetOptions(
 
 
 ### Defaults ########################################################
-our $RootDir=$Bin;
+
 
 
 
@@ -90,13 +89,6 @@ our $freebayes_min_alternative_count=3 unless (defined $freebayes_min_alternativ
 our $min_mapq=0 unless (defined $min_mapq);
 #samtools
 our $path_samtools='samtools';
-#HapCompass
-our $path_hapcompassjar="$RootDir/utils/hapcompass/hapcompass.jar";
-our $path_hc2vcf="$RootDir/utils/hapcompass/hc2vcf.jar";
-our $path_java='java';
-#VCFtools
-our $path_vcfmerge='vcf-merge';
-
 
 
 ### input and output ################################################
@@ -416,14 +408,14 @@ sub ExpressFpkm {
 #			(ref1 => fpkm1, ref2 => fpkm2, ...), 
 #			(ref1 => fpkm1, ref2 => fpkm2, ...), 
 #			...)
-#$EFfpkms[$ith]->{reference_id}=fpkm
+#$EFfpkms[$ith]->{reference_id}=fpkm		
 }
 
 
 
 ###RunFreebayes, return merged vcf and raw AABBDD vcf
 ###&RunFreebayes($RFclusterID, ref_fasta, bam_AABBDD, bam_AABB, bam_AA, bam_DD)
-###Global: $freebayes_min_coverage, $freebayes_min_alternative_count, $min_mapq,$express_frag_len_mean, $express_frag_len_stddev, $express_max_read_len, $cluster_linenum, @cluster_seqids, $RunDir, $path_vcfmerge
+###Global: $freebayes_min_coverage, $freebayes_min_alternative_count, $min_mapq,$express_frag_len_mean, $express_frag_len_stddev, $express_max_read_len, $cluster_linenum, @cluster_seqids, $RunDir
 ###Dependancy: &ReadSam,
 sub RunFreebayes {
 	my ($RFfile_reference, $RFbam_aabbdd, $RFbam_aabb, $RFbam_aa, $RFbam_dd)=@_;
@@ -450,7 +442,7 @@ sub RunFreebayes {
 	unlink glob "AA/*";
 	unlink glob "DD/*";
 	foreach my $RFind_ref (@cluster_seqids) {
-##COMMENT: check if AABBDD transcript
+#check if AABBDD transcript
 		if (! defined ${$RF_express[0]}{$RFind_ref} or ${$RF_express[0]}{$RFind_ref}==0) {
 			print STDERR "SUB(RunFreebayes)Error: $RFind_ref FPKM problem: non-exist or 0\n";
 			next;
@@ -458,7 +450,7 @@ sub RunFreebayes {
 		${$RF_express[1]}{$RFind_ref}=0 if (! exists ${$RF_express[1]}{$RFind_ref});
 		${$RF_express[2]}{$RFind_ref}=0 if (! exists ${$RF_express[2]}{$RFind_ref});
 		${$RF_express[3]}{$RFind_ref}=0 if (! exists ${$RF_express[3]}{$RFind_ref});
-##COMMENT: check ploidy
+#check ploidy
 		my ($RFaabb_expressed, $RFaa_expressed, $RFdd_expressed)=(0, 0, 0);
 		if (${$RF_express[1]}{$RFind_ref}==0) {
 			$RFaabb_expressed=0;
@@ -483,8 +475,8 @@ sub RunFreebayes {
 			$RFdd_expressed=1;
 		}
 		else {print STDERR "SUB(RunFreebayes)Error: $RFind_ref FPKM problem in DD: unknown FPKM value: ${$RF_express[3]}{$RFind_ref}\n";}
-##COMMENT: define ploidy
-		if (exists $RFploidy{$RFind_ref}) {
+###ploidy problem
+		if {exists $RFploidy{$RFind_ref}) {
 			print STDERR "SUB(RunFreebayes)Error: $RFind_ref ploidy value already exists\n";
 			next;
 		}
@@ -498,99 +490,26 @@ sub RunFreebayes {
 			next;
 		}
 		print STDOUT "Reference: $RFind_ref\tPloidy: $RFploidy{$RFind_ref}\n";
-##COMMENT: runFreebayes and read vcf into hash
-		my $RFcmd_merge_vcf='';
-		$RFcmd_merge_vcf="$path_vcfmerge";
-		my $RFcmd_freebayes_aabbdd='';
-		$RFcmd_freebayes_aabbdd="$path_freebayes --fasta-reference $RFfile_reference --min-coverage $freebayes_min_coverage --min-alternate-count $freebayes_min_alternative_count --ploidy $RFploidy{$RFind_ref} --pooled-discrete --min-mapping-quality $min_mapq --only-use-input-alleles --variant-input AABBDD.guide.vcf --region $RFind_ref  $RFbam_aabbdd | gzip -c > AABBDD/AABBDD.$RFind_ref.vcf.gz";
-		if (&exec_cmd_return($RFcmd_freebayes_aabbdd)) {
-			print STDERR "SUB(RunFreebayes)Error: Running freebayes for AABBDD error\n";
+#runFreebayes
+		if (&exec_cmd_return("$path_freebayes --fasta-reference $RFfile_reference --min-coverage $freebayes_min_coverage --min-alternate-count $freebayes_min_alternative_count --ploidy $RFploidy{$RFind_ref} --pooled-discrete --min-mapping-quality $min_mapq --only-use-input-alleles --variant-input AABBDD.guide.vcf --region $RFind_ref  $RFbam_aabbdd | gzip -c > AABBDD/AABBDD.$RFind_ref.vcf.gz")) {
 			return 1;
 		}
-		if (! -s "AABBDD/AABBDD.$RFind_ref.vcf.gz") {
-			print STDERR "SUB(RunFreebayes)Error: freebayes output for AABBDD error\n";
-			return 1;
-		}else {
-			$RFcmd_merge_vcf.=" AABBDD/AABBDD.$RFind_ref.vcf.gz";
-		}
-		
-		my %RFaabb_freebayes_vcf=();
 		if (${$RF_express[1]}{$RFind_ref}>0) {
-			my $RFcmd_freebayes_aabb='';
-			$RFcmd_freebayes_aabb="$path_freebayes --fasta-reference $RFfile_reference --min-coverage $freebayes_min_coverage --min-alternate-count $freebayes_min_alternative_count --ploidy 2 --pooled-discrete --min-mapping-quality $min_mapq --only-use-input-alleles --variant-input AABBDD.guide.vcf --region $RFind_ref  $RFbam_aabb | gzip -c > AABB/AABB.$RFind_ref.vcf.gz";
-			if (&exec_cmd_return($RFcmd_freebayes_aabb)) {
-				print STDERR "SUB(RunFreebayes)Error: Running freebayes for AABB error\n";
+			if (&exec_cmd_return("$path_freebayes --fasta-reference $RFfile_reference --min-coverage $freebayes_min_coverage --min-alternate-count $freebayes_min_alternative_count --ploidy 2 --pooled-discrete --min-mapping-quality $min_mapq --only-use-input-alleles --variant-input AABBDD.guide.vcf --region $RFind_ref  $RFbam_aabb | gzip -c > AABB/AABB.$RFind_ref.vcf.gz")) {
 				return 1;
-			}
-			if (! -s "AABB/AABB.$RFind_ref.vcf.gz") {
-				print STDERR "SUB(RunFreebayes)Error: freebayes output for AABB error\n";
-				return 1;
-			}else {
-				my $RFaabbvcf=&ReadVcf("AABB/AABB.$RFind_ref.vcf.gz");
-				%RFaabb_freebayes_vcf=%{$RFaabbvcf};
-				$RFcmd_merge_vcf.=" AABB/AABB.$RFind_ref.vcf.gz";
 			}
 		}
-		
-		my %RFaa_freebayes_vcf=();
 		if (${$RF_express[2]}{$RFind_ref}>0) {
-			my $RFcmd_freebayes_aa='';
-			$RFcmd_freebayes_aa="$path_freebayes --fasta-reference $RFfile_reference --min-coverage $freebayes_min_coverage --min-alternate-count $freebayes_min_alternative_count --ploidy 2 --pooled-discrete --min-mapping-quality $min_mapq --only-use-input-alleles --variant-input AABBDD.guide.vcf --region $RFind_ref  $RFbam_aa | gzip -c > AA/AA.$RFind_ref.vcf.gz";
-			if (&exec_cmd_return($RFcmd_freebayes_aa)) {
-				print STDERR "SUB(RunFreebayes)Error: Running freebayes for AA error\n";
+			if (&exec_cmd_return("$path_freebayes --fasta-reference $RFfile_reference --min-coverage $freebayes_min_coverage --min-alternate-count $freebayes_min_alternative_count --ploidy 2 --pooled-discrete --min-mapping-quality $min_mapq --only-use-input-alleles --variant-input AABBDD.guide.vcf --region $RFind_ref  $RFbam_aa | gzip -c > AA/AA.$RFind_ref.vcf.gz")) {
 				return 1;
-			}
-			if (! -s "AA/AA.$RFind_ref.vcf.gz") {
-				print STDERR "SUB(RunFreebayes)Error: freebayes output for AA error\n";
-				return 1;
-			}else {
-				my $RFaavcf=&ReadVcf("AA/AA.$RFind_ref.vcf.gz");
-				%RFaa_freebayes_vcf=%{$RFaavcf};
-				$RFcmd_merge_vcf.=" AA/AA.$RFind_ref.vcf.gz";
 			}
 		}
-		
-		my %RFdd_freebayes_vcf=();
 		if (${$RF_express[3]}{$RFind_ref}>0) {
-			my $RFcmd_freebayes_dd='';
-			$RFcmd_freebayes_dd="$path_freebayes --fasta-reference $RFfile_reference --min-coverage $freebayes_min_coverage --min-alternate-count $freebayes_min_alternative_count --ploidy 2 --pooled-discrete --min-mapping-quality $min_mapq --only-use-input-alleles --variant-input AABBDD.guide.vcf --region $RFind_ref  $RFbam_dd | gzip -c > DD/DD.$RFind_ref.vcf.gz";
-			if (&exec_cmd_return($RFcmd_freebayes_dd)) {
-				print STDERR "SUB(RunFreebayes)Error: Running freebayes for DD error\n";
+			if (&exec_cmd_return("$path_freebayes --fasta-reference $RFfile_reference --min-coverage $freebayes_min_coverage --min-alternate-count $freebayes_min_alternative_count --ploidy 2 --pooled-discrete --min-mapping-quality $min_mapq --only-use-input-alleles --variant-input AABBDD.guide.vcf --region $RFind_ref  $RFbam_dd | gzip -c > DD/DD.$RFind_ref.vcf.gz")) {
 				return 1;
 			}
-			if (! -s "DD/DD.$RFind_ref.vcf.gz") {
-				print STDERR "SUB(RunFreebayes)Error: freebayes output for DD error\n";
-				return 1;
-			}else {
-				my $RFddvcf=&ReadVcf("DD/DD.$RFind_ref.vcf.gz");
-				%RFdd_freebayes_vcf=%{$RFddvcf};
-				$RFcmd_merge_vcf.=" DD/DD.$RFind_ref.vcf.gz";
-			}
 		}
-##COMMENT: merge vcf for debuging
-		$RFcmd_merge_vcf.=" > Clust$cluster_linenum/$RFind_ref.merge.vcf";
-		if (&exec_cmd_return($RFcmd_merge_vcf)) {
-			print STDERR "SUB(RunFreebayes)Error: $RFind_ref vcf-merge running error\n";
-			return 1;
-		} elsif (! -s "Clust$cluster_linenum/$RFind_ref.merge.vcf") {
-			print STDERR "SUB(RunFreebayes)Error: $RFind_ref vcf-merge output error\n";
-			return 1;
-		}
-##COMMENT: Correct VCF
-		
-		
-		
-##COMMENT: output prephased vcf for hapcompass
-
-
-##COMMENT: 
-
-
-
-
 	}###End of freebayes call for each reference in one cluster
-###delete############################################################
-=delete
 #Concatenate vcfs in one cluster
 	my @RFaabbdd_vcfs=glob "AABBDD/AABBDD.*.vcf.gz";
 	if (scalar(@RFaabbdd_vcfs)>1) {
@@ -633,7 +552,6 @@ sub RunFreebayes {
 				} else {
 					my $RFaabb_vcf=&readVcf("Clust$cluster_linenum/AABB.vcf.gz");
 					%RFreadvcf_aabb=%{$RFaabb_vcf};
-				}
 			}
 			else {
 				return 1;
@@ -723,8 +641,6 @@ sub RunFreebayes {
 		
 	}
 	close AABBDD_ORIVCF;
-=cut
-###Delete############################################################
 }
 
 
@@ -749,7 +665,7 @@ sub AssignVariationAllele {
 
 
 ###Read vcf into hash, return index
-###&ReadVcf(vcf_file)
+###ReadVcf(vcf_file)
 ###Global: $debug, 
 ###Dependancy: 
 ###VCF
@@ -778,7 +694,7 @@ sub ReadVcf {
 	}
 	my $num_line=0;
 	my %vcf=();
-	while (my $line=<VCF>) {
+	BLOCK2: {while (my $line=<VCF>) {
 		$num_line++;
 		next if ($line =~/^#/);
 		chomp $line;
@@ -794,24 +710,18 @@ sub ReadVcf {
 		($RVchr, $RVpos, $RVref, $RVvar)=($arr[0], $arr[1], $arr[3], $arr[4]);
 		if (exists ${$vcf{$RVchr}}{$RVpos} ) {
 			print STDERR "SUB(ReadVcf)Error: exists $RVchr - $RVpos at $num_line in $RVvcf\n";
-			next;
+			next BLOCK2;
 		}
 		@{${$vcf{$RVchr}}{$RVpos}}=($RVref, $RVvar);
 		for (my $i=9; $i<scalar(@arr); $i++) {
 			my @arr2=();
 			@arr2=split(/:/, $arr[$i]);
 #comment following two lines if not ignore those sites with only one var allele
-#			unless (&IsZeroIn($arr2[2])) {
-#				delete ${$vcf{$RVchr}}{$RVpos};
-#				last;
-#			}
-#			unless (&IsZeroIn($arr2[4])){
-#				delete ${$vcf{$RVchr}}{$RVpos};
-#				last;
-#			}
+			next BLOCK2 unless (&IsZeroIn($arr2[2]));
+			next BLOCK2 unless (&IsZeroIn($arr2[4]));
 			push (@{${$vcf{$RVchr}}{$RVpos}}, $arr2[0]);
 		}
-	}
+	}}
 	close VCF;
 	
 	#	print "vcf input\n";###test###
@@ -839,65 +749,6 @@ sub ReadVcf {
 ###		...
 ###		);
 ###$vcf{chr}->{pos}=(ref, var, gen, gen2, ...);
-###Be noted: var could be comma-delimited string, in case of two variants
-}
-
-
-
-###RunHapCompass
-###&RunHapCompass()
-###Global: $path_java, $path_hapcompassjar, $path_hc2vcf
-###Require: hapcompass.jar hc2vcf.jar
-###Dependancy: freebayes
-###Note: 
-sub RunHapCompass {
-	my ($RHCref, $RHCbam, $RHCvcf, $RHCploidy, $RHCoutput_vcf_prefix)=@_;
-##COMMIT: check input files for HapCompass
-	unless (-s $RHCref and -s $RHCbam and -s $RHCvcf) {
-		print STDERR "SUB(RunHapCompass)Reference: HapCompass inputs error: \n";
-		return 1;
-	}
-	unless ($RHCploidy>=2) {
-		print STDERR "SUB(RunHapCompass)Reference: HapCompass ploidy error: \n";
-		return 1;
-	}
-	if (! defined $RHCoutput_vcf_prefix or $RHCoutput_vcf_prefix eq '') {
-		print STDERR "SUB(RunHapCompass)Reference: HapCompass output prefix error: \n";
-		return 1;
-	}
-##COMMIT: Run HapCompass, output: $RHCoutput_vcf_prefix
-##									_frags.txt
-##									_MWER_solution.txt
-##									_phasedSolution.txt
-##									_reads.sam
-##									_reduced_representation.sam
-##									_reduced_representation.vcf
-	my $RHCcmd_hapcompass='';
-	$RHCcmd_hapcompass="$path_java -jar $path_hapcompassjar --reference $RHCref --bam $RHCbam --vcf $RHCvcf --ploidy $RHCploidy --output $RHCoutput_vcf_prefix";
-	if (&exec_cmd_return($RHCcmd_hapcompass)) {
-		print STDERR "SUB(RunHapCompass)Reference: HapCompass running error\n";
-		return 1;
-	}
-##COMMIT: check HapCompass output
-	if (! -s $RHCoutput_vcf_prefix.'_MWER_solution.txt') {
-		print STDERR "SUB(RunHapCompass)Reference: HapCompass output *_MWER_solution.txt error\n";
-		return 1;
-	}
-##COMMIT: run hc2vcf to convert hapcompass output to vcf
-##			output $RHCoutput_vcf_prefix.'_MWER_solution.txt.vcf'
-	my $RHCcmd_hc2vcf='';
-	$RHCcmd_hc2vcf="$path_java -jar $path_hc2vcf $RHCvcf $RHCploidy";
-	if (&exec_cmd_return($RHCcmd_hc2vcf)) {
-		print STDERR "SUB(RunHapCompass)Reference: hc2vcf running error\n";
-		return 1;
-	}
-	if (! -s $RHCoutput_vcf_prefix.'_MWER_solution.txt.vcf') {
-		print STDERR "SUB(RunHapCompass)Reference: hc2vcf running error\n";
-		return 1;
-	}
-	else {
-		return $RHCoutput_vcf_prefix.'_MWER_solution.txt.vcf';
-	}
 }
 
 
@@ -913,7 +764,7 @@ sub ReadSam {
 							-fasta => "$RSref_file",
 							-expand_flags => 1,
 							-split_splices => 1,
-							-autoindex => 1,
+							-autoindex => 1
 						);
 	if ($RSret_code==1) {
 		return $RSsam_obj;
@@ -933,14 +784,14 @@ sub ReadSam {
 
 
 ###group SNPs based on read length
-###GroupVcf($ReadVcf, $sam, reference_fa)
+###GroupVcf($vcf, $sam)
 ###Global: $debug
 ###Dependancy:
 sub GroupVcf {
-	my ($GVinput, $GVsamfile, $GVref)=@_;
-	my %GVvcf=%{$GVinput};#ReadVcf object
+	my ($GVinput, $GVsam, $GVref)=@_;
+	my %GVvcf=%{$GVinput};
 	my %snp_phased_by_reads=();
-	my $GVsam=&ReadSam($GVsamfile, $GVref, 1);
+	my $sam=&ReadSam($GVsam, 1);
 	foreach my $chrom (keys %GVvcf) {
 		my @positions=sort {$a<=>$b} (keys %{$GVvcf{$chrom}});
 		print "SUB(GroupVcf)Test: Reference2: $chrom\n" if ($debug);
@@ -948,7 +799,7 @@ sub GroupVcf {
 		my %pos=();
 		foreach (@positions) {
 			print $chrom, "\t", "Pos: $_\tRef:${${$GVvcf{$chrom}}{$_}}[0]\tVar${${$GVvcf{$chrom}}{$_}}[1]\tGen:${${$GVvcf{$chrom}}{$_}}[2]", "\n" if ($debug);
-			@{$pos{$_}}= $GVsam->get_features_by_location(-seq_id => "$chrom", -start => "$_", -end => "$_");
+			@{$pos{$_}}= $sam->get_features_by_location(-seq_id => "$chrom", -start => "$_", -end => "$_");
 		}
 		print "SUB(GroupVcf)Chrom: $chrom\nPositions: @positions\n" if ($debug);
 		foreach my $position (@positions) {
@@ -956,18 +807,17 @@ sub GroupVcf {
 				next if ($position2 <= $position);
 				my %share_alignments=();
 				my $num_share_alignments=0; 
-##Calculate number of shared reads at two vcf SNP/InDel sites (including same id for mate-pair)
 				foreach my $align (@{$pos{$position}}) {
 					foreach my $align2 (@{$pos{$position2}}) {
 						if ($align->name eq $align2->name) {
 							${$share_alignments{$align->name}}{$position}=$align;
 							${$share_alignments{$align2->name}}{$position2}=$align2;
 							$num_share_alignments++;
+							
 						}
 					}
 				}
-				next if ($num_share_alignments <$min_share_alignments);#Ignore these two sites if number of reads less than expected
-##Retrieve SNP/InDel SNP type for each shared reads
+				next if ($num_share_alignments <$min_share_alignments);
 				my @share_readids=keys %share_alignments;
 				print "Chr $chrom Pos $position vs Pos $position2\n";#." Shared IDs:\n@share_readids\n";
 				my %GVtest=();
@@ -986,7 +836,6 @@ sub GroupVcf {
 						$alleleB{$align2geno2}++;
 					}
 				}
-##Detect if any allele at these two sites are locked = appear at the same time in these reads
 				foreach my $GVphased_type (keys %GVtest) {
 #					print $GVphased_type."\n";###test###
 					my $GVtest2=0;
@@ -1007,6 +856,7 @@ sub GroupVcf {
 					}else {next;}
 					}
 				}
+				
 			}
 		}
 	}
@@ -1042,117 +892,75 @@ sub ReadVariantType {
 	my $RVTmdstring=$RVTsam_align->get_tag_values('MD');
 	print "SUB(ReadVariantType)Test: CIGAR: $RVTcigar\t\tMDstring: $RVTmdstring\n" if ($debug);
 	my $returnString='';
-##COMMENT: Separate genotype, Assign number to each genotype: ref=0, var1=1, var2=2 ...
+#Separate genotype
 	my %RVTallele2geno=();
 	$RVTallele2geno{$RVTref}=0;
 #	print "SUB(ReadVariantType)Test: ref: $RVTref, $RVTallele2geno{$RVTref}\n";###test###
-	my $RVTi=1;
+	my $i=1;
 	my @RVTvars=split(/,/, $RVTvar);
 	foreach (@RVTvars) {
-		$RVTallele2geno{$_}=$RVTi;
-		$RVTi++;
+		$RVTallele2geno{$_}=$i;
+		$i++;
 	}
 #	foreach (keys %RVTallele2geno) {print "SUB(ReadVariantType)Test: ref2: $_, $RVTallele2geno{$_}\n";} ###test###
-##COMMENT: Determine SNP/InDel vcf position for a read
-	my $RVTrefPos = $RVTsam_align->start;
-	print "SUB(ReadVariantType)Test: Alignments starts: $RVTrefPos\n" if ($debug);
-	my $RVTseqPos = 0;
-	my $RVTcigarOperations = &SplitCigar($RVTsam_align->cigar_str);
-	my ($RVTlast_is_insert, $RVTlast_is_deletion, $RVTlast_is_chop, $RVTlast_is_match)=(0, 0, 0, 0);
-	foreach my $operation (@$RVTcigarOperations) {
+#positions
+	my $refPos = $RVTsam_align->start;
+	print "SUB(ReadVariantType)Test: Alignments starts: $refPos\n" if ($debug);
+	my $seqPos = 0;
+	my $cigarOperations = &SplitCigar($RVTsam_align->cigar_str);
+	foreach my $operation (@$cigarOperations) {
 		my $cig_length = $operation->[0];
 		my $cig_op = $operation->[1];
 		print "SUB(ReadVariantType)Test: Cigar: ($cig_length, $cig_op)\n" if ($debug);
 		my ($RVTadd_ref, $RVTadd_seq)=(0, 0);
-		($RVTlast_is_insert, $RVTlast_is_deletion, $RVTlast_is_chop, $RVTlast_is_match)=(0, 0, 0, 0);
 		my $test_type=0;
 		if ($cig_op =~ /^D$/) {
-			$returnString .= "Deletion, $RVTrefPos, $cig_length\n";
+			$returnString .= "Deletion, $refPos, $cig_length\n";
 			$RVTadd_ref=$cig_length;
 			$test_type=3;
-			$RVTlast_is_deletion=1;
 		}
-		elsif ($cig_op =~ /^I$/) {
-			my $insertedBases = substr($RVTquery_seq, $RVTseqPos, $cig_length);
-			$returnString .= "Insertion, $RVTrefPos, $insertedBases\n";
+		elsif($cig_op =~ /^I$/) {
+			my $insertedBases = substr($RVTquery_seq, $seqPos, $cig_length);
+			$returnString .= "Insertion, $refPos, $insertedBases\n";
 			$RVTadd_seq=$cig_length;
 			$test_type=2;
-			$RVTlast_is_insert=1;
 		}
-		elsif ($cig_op =~ /^M$/) {
+		elsif($cig_op =~ /^M$/) {
 			$RVTadd_ref= $cig_length;
 			$RVTadd_seq= $cig_length;
 			$test_type=1;
-			$RVTlast_is_match=1;
 		}
-		elsif ($cig_op =~ /^S$/) {
+		elsif($cig_op =~ /^S$/) {
 			$RVTadd_seq=$cig_length;
 			$test_type=4;
-			$RVTlast_is_chop=1;
-			## Don't increment refPos
-		}
-		elsif ($cig_op =~ /^N$/) {
-			$RVTadd_ref= $cig_length;
-			$test_type=5;
-		}
-		elsif ($cig_op =~ /^H$/) {
-			$test_type=6;
-		}
-		elsif ($cig_op =~ /^P$/) {
-			$test_type=7;
+# Don't increment refPos
 		}
 		else {
-			print STDERR "SUB(ReadVariantType)Error: unrecognized Cigar State: $cig_op (Cigar: ". $RVTsam_align->cigar_str. " at position $RVTpos of Reference sequence ".$RVTsam_align->seq_id."\n";
-			return '?';
+			die ("SUB(ReadVariantType)Error: unrecognized Cigar State: $cig_op\n");
 		}
-		if (($RVTrefPos <= $RVTpos) and ($RVTpos <($RVTrefPos+$RVTadd_ref))) {
-			$RVTseqPos+=abs($RVTpos-$RVTrefPos);
+		if ($refPos <= $RVTpos and $RVTpos <($refPos+$RVTadd_ref)) {
+			$seqPos+=abs($RVTpos-$refPos);
 			last;
 		}
 		else {
 			next;
 		}
-		$RVTrefPos+=$RVTadd_ref;
-		$RVTseqPos+=$RVTadd_seq;
+		$refPos+=$RVTadd_ref;
+		$seqPos+=$RVTadd_seq;
 	}
-	print $RVTsam_align->start." $RVTpos $RVTseqPos\n" if ($debug);
-#	print substr($RVTquery_seq, $RVTseqPos, 1)."\n";###test###
-##COMMENT: Determine this read belone to which allele type;
-
+	
+	print $RVTsam_align->start." $RVTpos $seqPos\n" if ($debug);
+#	print substr($RVTquery_seq, $seqPos, 1)."\n";###test###
 	my @returnarr=();
-#	my @length_allele2geno=map {length($_)} keys %RVTallele2geno;
-#	@length_allele2geno=sort {$b<=>$a} @length_allele2geno;
-
-
-
 	foreach my $RVTind_allele (keys %RVTallele2geno) {
 #		print "SUB(ReadVariantType)Test: allele2geno: $RVTind_allele, $RVTallele2geno{$RVTind_allele}\n";###test###
-		if (! defined $RVTind_allele or $RVTind_allele eq '') {
+		if ($RVTind_allele eq '') {
 			print STDERR "SUB(ReadVariantType)Error: empty ref/var values in ".$RVTsam_align->seq_id."\t".$RVTpos."\t".$RVTref."\t". $RVTvar."\t".$RVTgeno."\n";
 			next;
 		}
-=old_algorithm
-		if ($RVTind_allele eq substr($RVTquery_seq, $RVTseqPos, length($RVTind_allele))) {
+		if ($RVTind_allele eq substr($RVTquery_seq, $seqPos, length($RVTind_allele))) {
 			push (@returnarr, $RVTallele2geno{$RVTind_allele});
 			print "SUB(ReadVariantType)Test: allele2geno: $RVTind_allele, $RVTallele2geno{$RVTind_allele}\n" if ($debug);
-		}
-=cut
-		my $EVTsubstr_length=length($RVTind_allele);
-		if ((length($RVTsam_align->query->dna)-$RVTseqPos+1)< length($RVTind_allele)) {#if reads not long enough to cover allele
-			$EVTsubstr_length=length($RVTsam_align->query->dna)-$RVTseqPos+1;
-		}
-		elsif (length($RVTind_allele) == length ($RVTref)) { 
-			if ($RVTind_allele eq substr($RVTquery_seq, $RVTseqPos, $EVTsubstr_length) and ($RVTlast_is_match==1)) {
-				push (@returnarr, $RVTallele2geno{$RVTind_allele});
-				print "SUB(ReadVariantType)Test: allele2geno: $RVTind_allele, $RVTallele2geno{$RVTind_allele}\n" if ($debug);
-			}
-		}
-		elsif (($RVTlast_is_deletion==1) or ($RVTlast_is_insert==1) or ($RVTlast_is_chop==1)) {
-			#There is a deletion in variant
-			if ($RVTind_allele eq substr($RVTquery_seq, $RVTseqPos, $EVTsubstr_length)) {
-				push (@returnarr, $RVTallele2geno{$RVTind_allele});
-				print "SUB(ReadVariantType)Test: allele2geno2: $RVTind_allele, $RVTallele2geno{$RVTind_allele}\n" if ($debug);
-			}
 		}
 	}
 #	print "@returnarr\n";###test
@@ -1167,14 +975,14 @@ sub ReadVariantType {
 ###Global: None
 ###Dependancy: none
 sub SplitCigar($) {
-	my $SCcigar_string = shift;
-	my @SCreturn_cigar_arr;
-	my (@SCcigars) = ($SCcigar_string =~ /(\d*\w)/g);
-	foreach (@SCcigars) {
-		my @SCoperation = ($_ =~ /(\d+)(\w)/);
-		push @SCreturn_cigar_arr, \@SCoperation;
+	my $cigar_string = shift;
+	my @returnable;
+	my (@matches) = ($cigar_string =~ /(\d+\w)/g);
+	foreach (@matches) {
+		my @operation = ($_ =~ /(\d+)(\w)/);
+		push @returnable, \@operation;
 	}
-	return \@SCreturn_cigar_arr;
+	return \@returnable;
 }
 
 
@@ -1371,7 +1179,3 @@ sub RetrvNoExt {
 	die "SUB(RetrvNoExt)Error: empty file name\n" if (!defined $RNEreturn or ($RNEreturn eq ''));
 	return $RNEreturn;
 }
-
-
-
-
